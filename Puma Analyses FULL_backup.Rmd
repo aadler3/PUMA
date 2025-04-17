@@ -1,0 +1,2368 @@
+---
+title: "PUMA Analysis"
+output: html_document
+date: "2025-02-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Set up
+```{r, include=FALSE}
+#load packages
+library(dplyr)
+library(flextable)
+library(ggplot2)
+library(collapse)
+library(labelled)
+library(compareGroups)
+library(gee)
+library(geepack)
+library(pROC)
+library(ROCR)
+library(plotROC)
+library(gridExtra)
+library(kableExtra)
+library(ggalluvial)
+```
+
+# Load Data
+```{r}
+pathway <- "~/Library/CloudStorage/Box-Box/Puma Analysis/Data/"
+#puma_all <- read.csv(file.path(pathway, "PUMAextract_27Jan2025.csv"))
+puma_all <- read.csv(file.path(pathway, "PUMAextract_13Mar2025.csv"))
+```
+
+# New Variable Creation/Cleaning
+```{r}
+# Create any BC variable
+puma_all$bc_any <- ifelse(puma_all$par5_recode == 0, 0, ifelse(puma_all$par5_recode == 99, NA, 1))
+
+puma_all <- puma_all %>% mutate(new_partner = ifelse(sex6 >=1, 1, 0),
+                                HIV_pos_partner = ifelse(sex7 >=1, 1, 0),
+                                unknown_HIV = ifelse(sex9 >= 1, 1, 0),
+                                HIV_neg_partner = ifelse(sex11 >=1, 1, 0)
+                                )
+
+puma_all <- puma_all %>% mutate(condomless_sex = ifelse(sex2 == sex3, 0, 1))
+puma_all <- puma_all %>% relocate(condomless_sex, .after = sex3)
+
+
+# re-code variables
+puma_all <- puma_all %>% mutate(emp_coded = case_when(emp == 1 ~ "Laborer/semi-skilled",
+                                                      emp == 2 ~ "Trade/sales",
+                                                      emp == 3 ~ "Student",
+                                                      emp == 4 ~ "Professional",
+                                                      emp == 5 ~ "Farming/animal raising",
+                                                      emp == 6 ~ "Housewife",
+                                                      emp == 99 ~ "Multiple/Other"),
+                                incsource_coded = case_when(incsource == 1 ~ "My work",
+                                                            incsource == 2 ~ "My husband's work",
+                                                            incsource == 3 ~ "My family",
+                                                            incsource == 9 ~ "Other"),
+                                ppoz_coded = case_when(ppoz == 0 ~ "No",
+                                                       ppoz == 1 ~ "Yes",
+                                                       ppoz == 2 ~ "Don't know"),
+                                travel_coded = case_when(travel == 1 ~ "Less than 30 minutes",
+                                                         travel == 2 ~ "30-59 minutes",
+                                                         travel == 3 ~ "1-2 hours",
+                                                         travel == 4 ~ "More than 2 hours"))
+
+
+table(puma_all$group, useNA = "ifany")
+#checking class of arm variable
+class(puma_all$group)
+
+#name values for group 1=POC Urine Assay, 2=SOC
+#val_labels extracts variable labels from labelled vectors 
+val_labels(puma_all$group) <- c("Intervention" = 1, "Standard of Care" = 2)
+val_labels(puma_all$group)
+#use label for final table
+puma_all$group <- to_character(puma_all$group)
+
+puma_all$group_new <- case_when(puma_all$group == "Standard of Care" ~ 1,
+                                puma_all$group == "Intervention" ~ 2)
+
+puma_all <- puma_all %>% relocate(group_new, .after = group)
+
+#val_labels extracts variable labels from labelled vectors 
+val_labels(puma_all$group_new) <- c("Intervention" = 2, "Standard of Care" = 1)
+val_labels(puma_all$group_new)
+#use label for final table
+puma_all$group_new <- to_character(puma_all$group_new)
+
+puma_all$group_new <- factor(puma_all$group_new, levels = c("Standard of Care", "Intervention"))
+
+val_labels(puma_all$padh7) <- c("Very poor" = 0, "Poor" = 1, "Fair" = 2, "Good" = 3, "Very good" = 4, "Excellent" = 5)
+val_labels(puma_all$padh7)
+puma_all$padh7 <- to_character(puma_all$padh7)
+
+puma_all <- puma_all %>% mutate(padh7_recode = case_when(padh7 == "Very poor" ~ 0,
+                                                         padh7 == "Poor" ~.2,
+                                                         padh7 == "Fair" ~ .4,
+                                                         padh7 == "Good" ~ .6,
+                                                         padh7 == "Very good" ~ .8,
+                                                         padh7 == "Excellent" ~ 1))
+puma_all <- puma_all %>% relocate(padh7_recode, .after = padh7)
+
+puma_all <- puma_all %>% mutate(padh4 = ifelse(padh3 == 1, 0, padh4))
+
+puma_all <- puma_all %>% mutate(padh4_recode = (30-padh4)/30)
+puma_all <- puma_all %>% relocate(padh4_recode, .after = padh4)
+
+puma_all <- puma_all %>% mutate(avg_padh = ((padh4_recode + padh7_recode)/2)*100)
+puma_all <- puma_all %>% relocate(avg_padh, .after = wilson_adh)
+
+puma_all <- puma_all %>% mutate(wilson_adh_scaled_sd = wilson_adh/sd(wilson_adh, 
+                                                                    na.rm = TRUE))
+
+puma_all <- puma_all %>% relocate(wilson_adh_scaled_sd, .after = wilson_adh)
+
+
+wilson_adh <- puma_all %>% select(ptid, padh4, padh4_recode, padh7, padh7_recode, wilson_adh, avg_padh)
+
+#wilson_adh_x <- wilson_adh %>% filter(wilson_adh != avg_padh)
+
+puma_all$visit_coded <- factor(puma_all$visit, levels = c(1, 2, 3, 4, 5),
+                         labels = c("Baseline", "Month3", "Month6",
+                                    "Month9", "Month12"))
+
+puma_all$ptid  <- as.character(puma_all$ptid)
+
+### Recode Hair Data with STRAND doses 
+# 3 levels 
+# duplicate hair3code
+puma_all$hair3numeric <- puma_all$hair3code
+
+table(puma_all$hair3code)
+puma_all$hair3code <- factor(puma_all$hair3code, levels = c(1, 2, 3),
+                             labels = c("<2", "2 to 3", ">=4"))
+table(puma_all$hair3code)
+
+# 4 levels
+table(puma_all$hair4code, useNA = "ifany")
+puma_all$hair4code <- factor(puma_all$hair4code, levels = c(1, 2, 3, 4),
+                             labels = c("<2", "2 to 3", "4-6", "Daily"))
+table(puma_all$hair4code, useNA = "ifany")
+
+# 3 with BLQ separated out
+table(puma_all$hair4blq, useNA = "ifany")
+puma_all$hair4blq <- factor(puma_all$hair4blq, levels = c(0, 1, 2, 3),
+                            labels = c("BLQ", "<2", "2 to 3", ">=4"))
+table(puma_all$hair4blq, useNA = "ifany")
+
+# 4 with BLQ separated out
+table(puma_all$hair5blq, useNA = "ifany")
+puma_all$hair5blq <- factor(puma_all$hair5blq, levels = c(0, 1, 2, 3, 4),
+                            labels = c("BLQ", "<2", "2 to 3", "4-6", "Daily"))
+table(puma_all$hair5blq, useNA = "ifany")
+
+## Low vs High Hair Variable
+puma_all <- puma_all %>% mutate(hair2code = case_when(hair3code == "<2" ~ "<=3",
+                                                      hair3code == "2 to 3" ~ "<=3",
+                                                      hair3code == ">=4" ~">=4"),
+                                hair2_coded = ifelse(hair2code == ">=4", 1, 0)) %>%
+  relocate(c(hair2code, hair2_coded), .after = hair3code)
+
+## Create a categorical Wilson Adherence Score for Alluvial Plots
+puma_all <- puma_all %>% mutate(wilson_cat = case_when(wilson_adh >= 0 & wilson_adh <= 20 ~ "0-20",
+                                                       wilson_adh >= 21 & wilson_adh <= 40 ~ "21-40",
+                                                       wilson_adh >= 41 & wilson_adh <= 60 ~ "41-60",
+                                                       wilson_adh >= 61 & wilson_adh <= 80 ~ "61-80",
+                                                       wilson_adh >= 81 & wilson_adh <= 100 ~ "81-100"))
+puma_all <- puma_all %>% relocate(wilson_cat, .after = wilson_adh)
+```
+
+
+# Re-running Presenation Statistics
+```{r}
+month12 <- puma_all %>% filter(visit == 5)
+
+table(month12$ut_result, useNA = "ifany")
+table(month12$detect_tfv, useNA = "ifany")
+
+month12_soc <- month12 %>% filter(group == 2)
+
+month12_soc <- month12_soc %>% filter(ptid == "534201982")
+
+## Overall
+mean(month12$wilson_adh)
+sd(month12$wilson_adh)
+
+## Urine Assay Results
+t.test(wilson_adh ~ ut_result, data = month12)
+month12_utpos <- month12 %>% filter(ut_result == 1)
+mean(month12_utpos$wilson_adh)
+sd(month12_utpos$wilson_adh)
+
+month12_utneg <- month12 %>% filter(ut_result == 0)
+mean(month12_utneg$wilson_adh)
+sd(month12_utneg$wilson_adh)
+
+## Hair Analysis
+t.test(wilson_adh ~ detect_tfv, data = month12)
+month12_tfvpos <- month12 %>% filter(detect_tfv == 1)
+mean(month12_tfvpos$wilson_adh)
+sd(month12_tfvpos$wilson_adh)
+
+month12_tfvneg <- month12 %>% filter(detect_tfv == 0)
+mean(month12_tfvneg$wilson_adh)
+sd(month12_tfvneg$wilson_adh)
+```
+
+
+# Table 1 Re-creation
+```{r}
+# Limit to baseline data for Table 1
+baseline <- puma_all %>% filter(visit == 1)
+
+# Re-code variables for ease of creating Table 1
+
+# create a list of binary variables to code as yes/no from 1/0
+table1_data <- baseline
+
+bin_variables <- c("marital", "sex8", "sex10", "sex12", "sex14", "par5___1", "par5___2",
+                   "par5___3", "par5___4", "par5___5", "par5___6", "par5___7", 
+                   "par5___8", "par5___9", "padh3", "padh9___1", "padh9___2", 
+                   "padh9___3", "padh9___4", "padh9___5", "padh9___6", "padh9___7",
+                   "padh9___8", "padh9___9", "padh9___10", "padh9___11", "padh9___12",
+                   "padh9___13", "padh9___14", "padh9___15", "padh9____9", "padh10",
+                   "mh14", "mh16", "mh17", "ut_result", "detect_tfv", "condomless_sex",
+                    "new_partner", "HIV_pos_partner","unknown_HIV", "HIV_neg_partner", 
+                   "bc_any")
+
+
+for (var in bin_variables){
+  table1_data[[var]] <- ifelse(table1_data[[var]] == 1, "Yes", "No")
+}
+
+table1_char <- table1_data %>% select("age", "edu", "income", "sex1", "prep_length", 
+                                      "padh3", "padh6", "emp_coded", 
+                                      "ppoz_coded", "marital", "mh14", "bc_any", "travel_coded",
+                                      "incsource_coded", "group")
+
+table1_arms <- compareGroups(group~ ., data = table1_data,na.omit(TRUE))
+export_table1_arms <- createTable(table1_arms, show.p.overall=FALSE)
+export_table1_arms
+
+table1_sex_data <- table1_data %>% filter(sex2 > 0) %>% select("sex5", "sex2", "condomless_sex",
+                                      "new_partner", "HIV_pos_partner", 
+                                      "unknown_HIV", "HIV_neg_partner", "sex14", "group")
+table1_sex <- compareGroups(group~ ., data = table1_sex_data,na.omit(TRUE), method = 2)
+export_table1_sex <- createTable(table1_sex, show.p.overall=FALSE)
+export_table1_sex
+
+table1_all <- compareGroups(~ ., data = table1_char,na.omit(TRUE))
+export_table1_all <- createTable(table1_all, show.p.overall=FALSE)
+export_table1_all
+
+table1_sex_all <- compareGroups(~ ., data = table1_sex_data,na.omit(TRUE), method = 2)
+export_table1_sex_all <- createTable(table1_sex_all, show.p.overall=FALSE)
+export_table1_sex_all
+
+```
+
+```{r}
+## NEXT STEPS 
+# Descriptive statistics for primary variables in population over time (i.e., hair levels, urine results, etc.)
+  # For hair levels, I’ll run it as detectable/undetectable and as different thresholds
+  # For self-reported adherence, I’ll calculate statistics both for separate items and mean adherence       score
+# Descriptive statistics for retention in study population over time
+# Re-run all models from the CROI abstract
+```
+
+# Descriptive Statistics over Study Period
+```{r}
+## POC and SOC split
+
+poc_all <- puma_all %>% filter(group == "Intervention")
+
+soc_all <- puma_all %>% filter(group == "Standard of Care")
+```
+
+# Hair Levels ##
+```{r}
+# Binary Variable ####
+hair_long <- puma_all %>% select(group, detect_tfv, visit, ptid)
+
+hair_long <- as.data.frame(hair_long)
+
+hair_wide <- reshape(hair_long, v.names = "detect_tfv", idvar = c("ptid", "group"), 
+                   timevar = "visit", direction = "wide")
+
+sum(hair_wide$detect_tfv.1, na.rm = TRUE)/length(hair_wide$ptid)
+sum(is.na(hair_wide$detect_tfv.1))
+
+sum(hair_wide$detect_tfv.2, na.rm = TRUE)/length(hair_wide$ptid)
+sum(is.na(hair_wide$detect_tfv.2))
+
+sum(hair_wide$detect_tfv.3, na.rm = TRUE)/length(hair_wide$ptid)
+sum(is.na(hair_wide$detect_tfv.3))
+
+sum(hair_wide$detect_tfv.4, na.rm = TRUE)/length(hair_wide$ptid)
+sum(is.na(hair_wide$detect_tfv.4))
+
+sum(hair_wide$detect_tfv.5, na.rm = TRUE)/length(hair_wide$ptid)
+sum(is.na(hair_wide$detect_tfv.5))
+
+hair_poc <- hair_wide %>% filter(group == "Intervention")
+
+hair_soc <- hair_wide %>% filter(group == "Standard of Care")
+
+## Chi-squared tests
+table_ht1 <- table(hair_wide$group, hair_wide$detect_tfv.1)
+chisq_ht1 <- chisq.test(table_ht1)
+print(chisq_ht1)
+
+table_ht2 <- table(hair_wide$group, hair_wide$detect_tfv.2)
+chisq_ht2 <- chisq.test(table_ht2)
+print(chisq_ht2)
+
+table_ht3 <- table(hair_wide$group, hair_wide$detect_tfv.3)
+chisq_ht3 <- chisq.test(table_ht3)
+print(chisq_ht3)
+
+table_ht4 <- table(hair_wide$group, hair_wide$detect_tfv.4)
+chisq_ht4 <- chisq.test(table_ht4)
+print(chisq_ht4)
+
+table_ht5 <- table(hair_wide$group, hair_wide$detect_tfv.5)
+chisq_ht5 <- chisq.test(table_ht5)
+print(chisq_ht5)
+
+## Overall chi-squared test
+observed_ht1 <- table(hair_wide$detect_tfv.1)
+result_ht1 <- chisq.test(observed_ht1)
+print(result_ht1)
+
+observed_ht2 <- table(hair_wide$detect_tfv.2)
+result_ht2 <- chisq.test(observed_ht2)
+print(result_ht2)
+
+observed_ht3 <- table(hair_wide$detect_tfv.3)
+result_ht3 <- chisq.test(observed_ht3)
+print(result_ht3)
+
+observed_ht4 <- table(hair_wide$detect_tfv.4)
+result_ht4 <- chisq.test(observed_ht4)
+print(result_ht4)
+
+observed_ht5 <- table(hair_wide$detect_tfv.5)
+result_ht5 <- chisq.test(observed_ht5)
+print(result_ht5)
+
+# Categorical over study period ####
+## Hair3code (3 categories)
+
+# Loop through visits 1-5 and generate tables by study arm and overall
+for (i in 1:5) {
+  cat("\n----- Visit", i, "-----\n")
+  
+  # Get all unique values of group_new for this visit
+  groups <- unique(puma_all$group_new[puma_all$visit == i])
+  
+  # Loop through each group
+  for (g in groups) {
+    cat("\nStudy Arm:", g, "\n")
+    
+    # Count table for this visit and group
+    visit_group_table <- table(puma_all$hair3code[puma_all$visit == i & 
+                                                 puma_all$group_new == g])
+    print(visit_group_table)
+    
+    # Percentage table for this visit and group
+    visit_group_prop <- prop.table(visit_group_table) * 100
+    cat("\nPercentages:\n")
+    print(round(visit_group_prop, 1)) # Rounded to 1 decimal place
+    
+    cat("\n")
+  }
+  
+  # Show overall distribution for this visit
+  cat("\nOverall for Visit", i, "\n")
+  visit_table <- table(puma_all$hair3code[puma_all$visit == i])
+  print(visit_table)
+  
+  visit_prop <- prop.table(visit_table) * 100
+  cat("\nOverall Percentages:\n")
+  print(round(visit_prop, 1))
+  
+  cat("\n-----------------------\n")
+}
+
+## Hair4blq (3 categories and BLQ)
+# Loop through visits 1-5 and generate tables by study arm and overall
+for (i in 1:5) {
+  cat("\n----- Visit", i, "-----\n")
+  
+  # Get all unique values of group_new for this visit
+  groups <- unique(puma_all$group_new[puma_all$visit == i])
+  
+  # Loop through each group
+  for (g in groups) {
+    cat("\nStudy Arm:", g, "\n")
+    
+    # Count table for this visit and group
+    visit_group_table <- table(puma_all$hair4blq[puma_all$visit == i & 
+                                                 puma_all$group_new == g])
+    print(visit_group_table)
+    
+    # Percentage table for this visit and group
+    visit_group_prop <- prop.table(visit_group_table) * 100
+    cat("\nPercentages:\n")
+    print(round(visit_group_prop, 1)) # Rounded to 1 decimal place
+    
+    cat("\n")
+  }
+  
+  # Show overall distribution for this visit
+  cat("\nOverall for Visit", i, "\n")
+  visit_table <- table(puma_all$hair4blq[puma_all$visit == i])
+  print(visit_table)
+  
+  visit_prop <- prop.table(visit_table) * 100
+  cat("\nOverall Percentages:\n")
+  print(round(visit_prop, 1))
+  
+  cat("\n-----------------------\n")
+}
+
+### Cat -- 2 categories 
+for (i in 1:5) {
+  cat("\n----- Visit", i, "-----\n")
+  
+  # Get all unique values of group_new for this visit
+  groups <- unique(puma_all$group_new[puma_all$visit == i])
+  
+  # Loop through each group
+  for (g in groups) {
+    cat("\nStudy Arm:", g, "\n")
+    
+    # Count table for this visit and group
+    visit_group_table <- table(puma_all$hair2code[puma_all$visit == i & 
+                                                 puma_all$group_new == g])
+    print(visit_group_table)
+    
+    # Percentage table for this visit and group
+    visit_group_prop <- prop.table(visit_group_table) * 100
+    cat("\nPercentages:\n")
+    print(round(visit_group_prop, 1)) # Rounded to 1 decimal place
+    
+    cat("\n")
+  }
+  
+  # Show overall distribution for this visit
+  cat("\nOverall for Visit", i, "\n")
+  visit_table <- table(puma_all$hair2code[puma_all$visit == i])
+  print(visit_table)
+  
+  visit_prop <- prop.table(visit_table) * 100
+  cat("\nOverall Percentages:\n")
+  print(round(visit_prop, 1))
+  
+  cat("\n-----------------------\n")
+}
+
+### Continuous Hair Variable (non-modified)
+# Loop through visits 1-5 to calculate mean and sd of tfvngml
+for (i in 1:5) {
+  cat("\n----- Visit", i, "-----\n")
+  
+  # Calculate overall mean and sd for this visit
+  cont_data <- puma_all %>% filter(blq != 1)
+  overall_mean <- mean(cont_data$tfvngml[cont_data$visit == i], na.rm = TRUE)
+  overall_sd <- sd(cont_data$tfvngml[cont_data$visit == i], na.rm = TRUE)
+  
+  cat("\nOverall:\n")
+  cat("Mean:", round(overall_mean, 4), "\n")
+  cat("SD:", round(overall_sd, 4), "\n")
+  
+  # Get all unique values of group_new for this visit
+  groups <- unique(cont_data$group_new[cont_data$visit == i])
+  
+  # Loop through each group
+  for (g in groups) {
+    cat("\nStudy Arm:", g, "\n")
+    
+    # Calculate mean and sd for this visit and group
+    group_mean <- mean(cont_data$tfvngml[cont_data$visit == i & 
+                                       cont_data$group_new == g], 
+                      na.rm = TRUE)
+    
+    group_sd <- sd(cont_data$tfvngml[cont_data$visit == i & 
+                                   cont_data$group_new == g], 
+                  na.rm = TRUE)
+    
+    cat("Mean:", round(group_mean, 4), "\n")
+    cat("SD:", round(group_sd, 4), "\n")
+  }
+  
+  cat("\n-----------------------\n")
+}
+
+table(poc_all$visit_coded, poc_all$blq)
+table(soc_all$visit_coded, soc_all$blq)
+table(puma_all$visit_coded, puma_all$blq)
+```
+
+# Urine Analysis ####
+```{r}
+
+ut_long <- puma_all %>% select(group_new, ut_result, visit, ptid)
+
+ut_long <- as.data.frame(ut_long)
+
+ut_wide <- reshape(ut_long, v.names = "ut_result", idvar = c("ptid", "group_new"), 
+                   timevar = "visit", direction = "wide")
+
+sum(ut_wide$ut_result.1, na.rm = TRUE)/length(ut_wide$ptid)
+sum(is.na(ut_wide$ut_result.1))
+
+sum(ut_wide$ut_result.2, na.rm = TRUE)/length(ut_wide$ptid)
+sum(is.na(ut_wide$ut_result.2))
+
+sum(ut_wide$ut_result.3, na.rm = TRUE)/length(ut_wide$ptid)
+sum(is.na(ut_wide$ut_result.3))
+
+sum(ut_wide$ut_result.4, na.rm = TRUE)/length(ut_wide$ptid)
+sum(is.na(ut_wide$ut_result.4))
+
+sum(ut_wide$ut_result.5, na.rm = TRUE)/length(ut_wide$ptid)
+sum(is.na(ut_wide$ut_result.5))
+
+urine_poc <- ut_wide %>% filter(group_new == "Intervention")
+
+urine_soc <- ut_wide %>% filter(group_new == "Standard of Care")
+
+## Chi-squared tests between intervention and SOC
+table_ut1 <- table(ut_wide$group_new, ut_wide$ut_result.1)
+chisq_ut1 <- chisq.test(table_ut1)
+print(chisq_ut1)
+
+#compare with missing removed
+urine_12_nomiss <- ut_wide %>% filter(!is.na(ut_result.1))
+table_ut1 <- table(urine_12_nomiss$ut_result.1, urine_12_nomiss$group_new)
+chisq_ut1 <- chisq.test(table_ut1)
+print(chisq_ut1)
+
+
+table_ut2 <- table(ut_wide$group, ut_wide$ut_result.2)
+chisq_ut2 <- chisq.test(table_ut2)
+print(chisq_ut2)
+
+table_ut3 <- table(ut_wide$group, ut_wide$ut_result.3)
+chisq_ut3 <- chisq.test(table_ut3)
+print(chisq_ut3)
+
+table_ut4 <- table(ut_wide$group, ut_wide$ut_result.4)
+chisq_ut4 <- chisq.test(table_ut4)
+print(chisq_ut4)
+
+table_ut5 <- table(ut_wide$group, ut_wide$ut_result.5)
+chisq_ut5 <- chisq.test(table_ut5)
+print(chisq_ut5)
+
+## Overall chi-square test
+observed_ut1 <- table(ut_wide$ut_result.1)
+result_ut1 <- chisq.test(observed_ut1)
+print(result_ut1)
+
+observed_ut2 <- table(ut_wide$ut_result.2)
+result_ut2 <- chisq.test(observed_ut2)
+print(result_ut2)
+
+observed_ut3 <- table(ut_wide$ut_result.3)
+result_ut3 <- chisq.test(observed_ut3)
+print(result_ut3)
+
+observed_ut4 <- table(ut_wide$ut_result.4)
+result_ut4 <- chisq.test(observed_ut4)
+print(result_ut4)
+
+observed_ut5 <- table(ut_wide$ut_result.5)
+result_ut5 <- chisq.test(observed_ut5)
+print(result_ut5)
+
+no_hair <- month12 %>% filter(is.na(detect_tfv)) %>% select(ptid, detect_tfv, ut_result, group)
+
+## GEE models for comparisons to baseline urine using GEE with a working independence structure
+gee_model <- geeglm(ut_result ~ factor(visit) * factor(group_new),
+                   family = binomial(link = "logit"),
+                   id = ptid,  # assuming 'id' is your subject identifier
+                   corstr = "independence",
+                   data = ut_long)
+
+# Test interaction terms and store p-values
+for (k in 2:5) {
+  # Create the term to test
+  interaction_term <- paste0("factor(visit)", k, ":factor(group_new)Intervention")
+  
+  # Get linearHypothesis test results for this term
+  test_result <- car::linearHypothesis(gee_model, interaction_term)
+  
+  # Extract and format p-value, then store it
+  p_value <- sprintf("%.3f", test_result[["Pr(>Chisq)"]][2])
+  
+  # Save p-value to corresponding visits
+  ut_long$pv[ut_long$visit == k] <- p_value
+}
+```
+
+# Self-reported Adherence
+```{r}
+# Self-reported Adherence ####
+#Self-reported adherence:
+#A lot of self-reported items
+# Wilson 3-item scale (only 2 in PUMA)
+# Percentage of doses taken in a month?
+adherence <- puma_all %>% select(group_new, wilson_adh, padh7_recode, padh4_recode, visit, ptid)
+adherence_wide <- reshape(adherence, v.names = c("wilson_adh", "padh7_recode", "padh4_recode"), idvar = "ptid",timevar = "visit", direction = "wide")
+
+mean(adherence_wide$wilson_adh.1)
+sd(adherence_wide$wilson_adh.1)
+t.test(wilson_adh.1 ~ group_new, adherence_wide)
+
+mean(adherence_wide$wilson_adh.2, na.rm = TRUE)
+sd(adherence_wide$wilson_adh.2, na.rm = TRUE)
+t.test(wilson_adh.2 ~ group_new, adherence_wide)
+
+mean(adherence_wide$wilson_adh.3, na.rm = TRUE)
+sd(adherence_wide$wilson_adh.3, na.rm = TRUE)
+t.test(wilson_adh.3 ~ group_new, adherence_wide)
+
+mean(adherence_wide$wilson_adh.4, na.rm = TRUE)
+sd(adherence_wide$wilson_adh.4, na.rm = TRUE)
+t.test(wilson_adh.4 ~ group_new, adherence_wide)
+
+mean(adherence_wide$wilson_adh.5, na.rm = TRUE)
+sd(adherence_wide$wilson_adh.5, na.rm = TRUE)
+t.test(wilson_adh.5 ~ group_new, adherence_wide)
+
+adherence_poc <- adherence_wide %>% filter(group_new == "Intervention")
+
+mean(adherence_poc$wilson_adh.1)
+sd(adherence_poc$wilson_adh.1)
+
+mean(adherence_poc$wilson_adh.2, na.rm = TRUE)
+
+sum(is.na(adherence_poc$wilson_adh.2))
+
+sd(adherence_poc$wilson_adh.2, na.rm = TRUE)
+
+mean(adherence_poc$wilson_adh.3, na.rm = TRUE)
+sd(adherence_poc$wilson_adh.3, na.rm = TRUE)
+sum(is.na(adherence_poc$wilson_adh.3))
+
+mean(adherence_poc$wilson_adh.4, na.rm = TRUE)
+sd(adherence_poc$wilson_adh.4, na.rm = TRUE)
+sum(is.na(adherence_poc$wilson_adh.4))
+
+mean(adherence_poc$wilson_adh.5, na.rm = TRUE)
+sd(adherence_poc$wilson_adh.5, na.rm = TRUE)
+sum(is.na(adherence_poc$wilson_adh.5))
+
+adherence_soc <- adherence_wide %>% filter(group_new == "Standard of Care")
+
+mean(adherence_soc$wilson_adh.1)
+sd(adherence_soc$wilson_adh.1)
+
+mean(adherence_soc$wilson_adh.2, na.rm = TRUE)
+sd(adherence_soc$wilson_adh.2, na.rm = TRUE)
+sum(is.na(adherence_soc$wilson_adh.2))
+
+mean(adherence_soc$wilson_adh.3, na.rm = TRUE)
+sd(adherence_soc$wilson_adh.3, na.rm = TRUE)
+sum(is.na(adherence_soc$wilson_adh.3))
+
+mean(adherence_soc$wilson_adh.4, na.rm = TRUE)
+sd(adherence_soc$wilson_adh.4, na.rm = TRUE)
+sum(is.na(adherence_soc$wilson_adh.4))
+
+mean(adherence_soc$wilson_adh.5, na.rm = TRUE)
+sd(adherence_soc$wilson_adh.5, na.rm = TRUE)
+sum(is.na(adherence_soc$wilson_adh.5))
+
+## Item padh7
+# List of variables to process
+variables <- c("padh7_recode.1", "padh7_recode.2", "padh7_recode.3", 
+               "padh7_recode.4", "padh7_recode.5")
+
+# List of datasets to process
+datasets <- list(adherence_wide, adherence_poc, adherence_soc)
+dataset_names <- c("adherence_wide", "adherence_poc", "adherence_soc")
+
+# Create a dataframe to store results
+results <- data.frame(
+  Dataset = character(),
+  Variable = character(),
+  NonNA_Count = numeric(),
+  NA_Count = numeric(),
+  Mean = numeric(),
+  SD = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Loop through each dataset
+for (d in 1:length(datasets)) {
+  dataset <- datasets[[d]]
+  dataset_name <- dataset_names[d]
+  
+  # Loop through each variable
+  for (var in variables) {
+    # Extract the variable
+    values <- dataset[[var]]
+    
+    # Calculate metrics
+    nonNA_count <- sum(!is.na(values))
+    na_count <- sum(is.na(values))
+    mean_val <- mean(values, na.rm = TRUE)
+    sd_val <- sd(values, na.rm = TRUE)
+    
+    # Add results to dataframe
+    results <- rbind(results, data.frame(
+      Dataset = dataset_name,
+      Variable = var,
+      NonNA_Count = nonNA_count,
+      NA_Count = na_count,
+      Mean = mean_val,
+      SD = sd_val
+    ))
+  }
+}
+
+# Print results
+print(results)
+
+t.test(padh7_recode.1 ~ group_new, adherence_wide)
+t.test(padh7_recode.2 ~ group_new, adherence_wide)
+t.test(padh7_recode.3 ~ group_new, adherence_wide)
+t.test(padh7_recode.4 ~ group_new, adherence_wide)
+t.test(padh7_recode.5 ~ group_new, adherence_wide)
+
+## Item padh4
+variables_padh4 <- c("padh4_recode.1", "padh4_recode.2", "padh4_recode.3", 
+               "padh4_recode.4", "padh4_recode.5")
+
+# Create a dataframe to store results
+results_padh4 <- data.frame(
+  Dataset = character(),
+  Variable = character(),
+  NonNA_Count = numeric(),
+  NA_Count = numeric(),
+  Mean = numeric(),
+  SD = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Loop through each dataset
+for (d in 1:length(datasets)) {
+  dataset <- datasets[[d]]
+  dataset_name <- dataset_names[d]
+  
+  # Loop through each variable
+  for (var in variables_padh4) {
+    # Extract the variable
+    values <- dataset[[var]]
+    
+    # Calculate metrics
+    nonNA_count <- sum(!is.na(values))
+    na_count <- sum(is.na(values))
+    mean_val <- mean(values, na.rm = TRUE)
+    sd_val <- sd(values, na.rm = TRUE)
+    
+    # Add results to dataframe
+    results_padh4 <- rbind(results_padh4, data.frame(
+      Dataset = dataset_name,
+      Variable = var,
+      NonNA_Count = nonNA_count,
+      NA_Count = na_count,
+      Mean = mean_val,
+      SD = sd_val
+    ))
+  }
+}
+
+# Print results
+print(results_padh4)
+
+t.test(padh4_recode.1 ~ group_new, adherence_wide)
+t.test(padh4_recode.2 ~ group_new, adherence_wide)
+t.test(padh4_recode.3 ~ group_new, adherence_wide)
+t.test(padh4_recode.4 ~ group_new, adherence_wide)
+t.test(padh4_recode.5 ~ group_new, adherence_wide)
+```
+
+# Retention over Study Period
+```{r}
+## Turn primary dataset into wide dataset
+puma_all <- as.data.frame(puma_all) #must be just data.frame for next step to work
+
+primary_long <- puma_all %>% select(ptid, group_new, visit, detect_tfv, ut_result,
+                                    wilson_adh, wilson_adh_scaled_sd)
+
+primary_wide <- reshape(primary_long, idvar = c("ptid", "group_new"), timevar = "visit", direction = "wide")
+
+# Retention
+ut_vars <- c("ut_result.1", "ut_result.2", "ut_result.3", "ut_result.4", "ut_result.5")
+
+# Total Sample
+for (var in ut_vars){
+  print(sum(!is.na(primary_wide[[var]])))
+}
+
+# Intervention Arm
+for (var in ut_vars){
+  poc <- primary_wide %>% filter(group_new == "Intervention")
+  print(sum(!is.na(poc[[var]])))
+  print(((sum(!is.na(poc[[var]])))/length(poc$ptid))*100)
+}
+
+# Control Arm
+for (var in ut_vars){
+  soc <- primary_wide %>% filter(group_new == "Standard of Care")
+  print(sum(!is.na(soc[[var]])))
+  print(((sum(!is.na(soc[[var]])))/length(soc$ptid))*100)
+}
+
+# Retention for hair and ut available 
+month1 <- primary_wide %>% filter((!is.na(ut_result.1)) & (!is.na(detect_tfv.1)))
+month3 <- primary_wide %>% filter((!is.na(ut_result.2)) & (!is.na(detect_tfv.2)))
+month6 <- primary_wide %>% filter((!is.na(ut_result.3)) & (!is.na(detect_tfv.3)))
+month9 <- primary_wide %>% filter((!is.na(ut_result.4)) & (!is.na(detect_tfv.4)))
+month12_hair_ut <- primary_wide %>% filter((!is.na(ut_result.5)) & (!is.na(detect_tfv.5)))
+
+table(month1$group_new)
+table(month3$group_new)
+table(month6$group_new)
+table(month9$group_new)
+table(month12_hair_ut$group_new)
+
+# Cummulative 
+month3_c <- month1 %>% filter((!is.na(ut_result.2)) & (!is.na(detect_tfv.2)))
+month6_c <- month3_c %>% filter((!is.na(ut_result.3)) & (!is.na(detect_tfv.3)))
+month9_c <- month6_c %>% filter((!is.na(ut_result.4)) & (!is.na(detect_tfv.4)))
+month12_hair_ut_c <- month9_c %>% filter((!is.na(ut_result.5)) & (!is.na(detect_tfv.5)))
+
+table(month3_c$group_new)
+table(month6_c$group_new)
+table(month9_c$group_new)
+table(month12_hair_ut_c$group_new)
+```
+
+# Updates for CROI Poster
+```{r}
+#Consider scaling the adherence score in your models, either by 10 or by the standard deviation so the relative risks are easier to interpret in one's head (it will also make the findings look more impressive)
+### Models are already scaled by 10 according to Deepalika
+
+# puma_all$group <- factor(puma_all$group_new, levels = c(1, 2), labels = c("Intervention", "Standard of Care"))
+# 
+
+# Scaling by SD:
+### Hair
+hair_gee_data <- puma_all %>%
+  filter(complete.cases(detect_tfv, wilson_adh, group_new, ptid)) %>% 
+  select(detect_tfv, wilson_adh_scaled_sd, wilson_adh10, 
+         group_new, ptid, wilson_adh, mh14, hair3numeric)
+
+gee_hair_scaled_sd <- gee(detect_tfv ~ wilson_adh_scaled_sd + group_new,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hair_gee_data)
+
+summary_gee_hair_sd <- summary(gee_hair_scaled_sd)
+
+# Code for calculating p-values from gee()
+z_values <- summary_gee_hair_sd$coefficients[, "Robust z"]
+p_values <- 2*pnorm(-abs(z_values))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients <- summary(gee_hair_scaled_sd)$coefficients[, 1]
+relative_risks <- exp(summary_gee_hair_sd$coefficients[, 1])
+robust_ses <- summary_gee_hair_sd$coefficients[, "Robust S.E."]
+lower_ci <- relative_risks - 1.96 * robust_ses
+upper_ci <- relative_risks + 1.96 * robust_ses
+names_hair_sd <- rownames(summary_gee_hair_sd$coefficients)
+
+hair_sd_results <- data.frame(
+  Term = names_hair_sd,
+  Estimate = round(exp(coefficients), 3), 
+  Robust_SE = round(robust_ses, 3),
+  z_value = round(z_values, 3),
+  p_value = round(p_values, 3),
+  CI_Lower = round(lower_ci, 3),
+  CI_Upper = round(upper_ci, 3)
+)
+
+flextable(hair_sd_results)
+
+### Urine
+ut_gee_data <- puma_all %>%
+  filter(complete.cases(ut_result, wilson_adh, group_new, ptid)) %>% 
+  select(ut_result, wilson_adh, wilson_adh_scaled_sd, 
+         wilson_adh10, group_new, ptid, mh14)
+
+gee_ut_scaled_sd <- gee(ut_result ~ wilson_adh_scaled_sd + group_new,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = ut_gee_data)
+
+summary_gee_ut_sd <- summary(gee_ut_scaled_sd)
+
+# Code for calculating p-values from gee()
+z_values_ut <- summary_gee_ut_sd$coefficients[, "Robust z"]
+p_values_ut <- 2*pnorm(-abs(z_values_ut))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_ut <- summary(gee_ut_scaled_sd)$coefficients[, 1]
+relative_risks_ut <- exp(summary_gee_ut_sd$coefficients[, 1])
+robust_ses_ut <- summary_gee_ut_sd$coefficients[, "Robust S.E."]
+lower_ci_ut <- relative_risks_ut - 1.96 * robust_ses_ut
+upper_ci_ut <- relative_risks_ut + 1.96 * robust_ses_ut
+names_hair_ut <- rownames(summary_gee_ut_sd$coefficients)
+
+ut_sd_results <- data.frame(
+  Term = names_hair_ut,
+  Estimate = round(exp(coefficients_ut), 3), 
+  Robust_SE = round(robust_ses_ut, 3),
+  z_value = round(z_values_ut, 3),
+  p_value = round(p_values_ut, 3),
+  CI_Lower = round(lower_ci_ut, 3),
+  CI_Upper = round(upper_ci_ut, 3)
+)
+
+flextable(ut_sd_results)
+
+#Consider generating confidence intervals for the mean adherence scores in figure 1. 
+  # Ignore for now? 
+
+#SD of age
+sd(baseline$age)
+  #9.369289
+
+#Bullet 6: please mention the p-values (and maybe even that they come from the t-tests) to highlight statistical significance. You can also mention those in the figure (or present the CIs as Matt suggested)
+  # p < 0.01 for both
+
+#I am suprised by the hair/score pvalue. It is 0.02 but the 95% CI goes right to 1.0. That seems odd to me. How can that be?
+
+## Run models with no scaling to assess this
+gee_hair <- gee(detect_tfv ~ wilson_adh + group_new,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hair_gee_data)
+
+summary_gee_hair <- summary(gee_hair)
+
+# Code for calculating p-values from gee()
+z_values_4 <- summary_gee_hair$coefficients[, "Robust z"]
+p_values_4 <- 2*pnorm(-abs(z_values_4))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_4 <- summary(gee_hair)$coefficients[, 1]
+relative_risks_4 <- exp(summary_gee_hair$coefficients[, 1])
+robust_ses_4 <- summary_gee_hair$coefficients[, "Robust S.E."]
+lower_ci_4 <- relative_risks_4 - 1.96 * robust_ses_4
+upper_ci_4 <- relative_risks_4 + 1.96 * robust_ses_4
+names_hair_sd_4 <- rownames(summary_gee_hair$coefficients)
+
+hair_results <- data.frame(
+  Term = names_hair_sd_4,
+  Estimate = round(exp(coefficients_4), 3), 
+  Robust_SE = round(robust_ses_4, 3),
+  z_value = round(z_values_4, 3),
+  p_value = p_values_4, 3,
+  CI_Lower = round(lower_ci_4, 3),
+  CI_Upper = round(upper_ci_4, 3)
+)
+
+flextable(hair_results)
+
+```
+
+# Re-run GEE models
+```{r}
+## Scaling by 10
+### Hair
+gee_hair_scaled_10 <- gee(detect_tfv ~ wilson_adh10 + group_new,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hair_gee_data)
+
+gee_hair_10 <- summary(gee_hair_scaled_10)
+
+# Code for calculating p-values from gee()
+z_values_10 <- gee_hair_10$coefficients[, "Robust z"]
+p_values_10 <- 2*pnorm(-abs(z_values_10))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_10 <- summary(gee_hair_scaled_10)$coefficients[, 1]
+relative_risks_10 <- exp(gee_hair_10$coefficients[, 1])
+robust_ses_10 <- gee_hair_10$coefficients[, "Robust S.E."]
+lower_ci_10 <- relative_risks_10 - 1.96 * robust_ses_10
+upper_ci_10 <- relative_risks_10 + 1.96 * robust_ses_10
+names_hair_10 <- rownames(gee_hair_10$coefficients)
+
+hair_10_results <- data.frame(
+  Term = names_hair_10,
+  Estimate = round(exp(coefficients_10), 4), 
+  Robust_SE = round(robust_ses_10, 3),
+  z_value = round(z_values_10, 3),
+  p_value = round(p_values_10, 3),
+  CI_Lower = round(lower_ci_10, 3),
+  CI_Upper = round(upper_ci_10, 3)
+)
+
+flextable(hair_10_results)
+
+### Urine
+gee_ut_10 <- gee(ut_result ~ wilson_adh10 + group_new,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = ut_gee_data)
+
+summary_gee_ut_10 <- summary(gee_ut_10)
+
+# Code for calculating p-values from gee()
+z_values_ut10 <- summary_gee_ut_10$coefficients[, "Robust z"]
+p_values_ut10 <- 2*pnorm(-abs(z_values_ut10))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_ut10 <- summary(gee_ut_10)$coefficients[, 1]
+relative_risks_ut10 <- exp(summary_gee_ut_10$coefficients[, 1])
+robust_ses_ut10 <- summary_gee_ut_10$coefficients[, "Robust S.E."]
+lower_ci_ut10 <- relative_risks_ut10 - 1.96 * robust_ses_ut10
+upper_ci_ut10 <- relative_risks_ut10 + 1.96 * robust_ses_ut10
+names_hair_ut10 <- rownames(summary_gee_ut_10$coefficients)
+
+ut_10_results <- data.frame(
+  Term = names_hair_ut10,
+  Estimate = round(exp(coefficients_ut10), 3), 
+  Robust_SE = round(robust_ses_ut10, 3),
+  z_value = round(z_values_ut10, 3),
+  p_value = round(p_values_ut10, 3),
+  CI_Lower = round(lower_ci_ut10, 3),
+  CI_Upper = round(upper_ci_ut10, 3)
+)
+
+flextable(ut_10_results)
+```
+
+# Adjusted model with forward stepwise regression
+```{r}
+# Turn secondary dataset into wide dataset
+puma_all <- as.data.frame(puma_all) #must be just data.frame for next step to work
+
+secondary_long <- puma_all %>% select(ptid, group_new, visit, detect_tfv, ut_result,
+                                    wilson_adh, wilson_adh_scaled_sd, padh4, padh7,
+                                    ppoz_coded, marital, income, travel_coded, 
+                                    incsource_coded, edu, emp_coded,mh14, sex1, 
+                                    prep_length,condomless_sex, sex14, age)
+
+secondary_wide <- reshape(secondary_long, idvar = c("ptid", "group_new"), timevar = "visit", direction = "wide")
+
+# Remove variables not needed at all timeframes
+secondary_wide <- secondary_wide %>% select(- c(prep_length.2, prep_length.3, prep_length.4, prep_length.5,
+                                      marital.2, marital.3, marital.4, marital.5, sex1.2,
+                                      sex1.3, sex1.4, sex1.5, age.2, age.3, age.4, age.5, edu.2, edu.3, edu.4,
+                                      edu.5, ppoz_coded.2, ppoz_coded.3, ppoz_coded.4, ppoz_coded.5, 
+                                      incsource_coded.2, incsource_coded.3, incsource_coded.4, incsource_coded.5,
+                                      sex1.2, sex1.3, sex1.4, sex1.5, prep_length.2, prep_length.3, prep_length.4, 
+                                      prep_length.5))
+
+```
+
+# Forward Selection
+## Univariable Analysis
+```{r}
+# List of predictor variables
+predictors <- c("wilson_adh", "wilson_adh_scaled_sd", "padh4", "padh7",
+                "ppoz_coded", "marital", "income", "travel_coded", 
+                "incsource_coded", "edu", "emp_coded", "mh14", "sex1", 
+                "prep_length", "condomless_sex", "sex14", "age")
+
+# List of outcome variables
+outcomes <- c("ut_result", "detect_tfv")
+
+# Create a data frame to store results
+results <- data.frame(outcome = character(),
+                     predictor = character(),
+                     estimate = numeric(),
+                     std_error = numeric(),
+                     p_value = numeric(),
+                     stringsAsFactors = FALSE)
+
+# Loop through each outcome and predictor combination
+for (outcome in outcomes) {
+  for (predictor in predictors) {
+    
+    # Create formula for the model
+    formula_str <- paste(outcome, "~", predictor)
+    formula_obj <- as.formula(formula_str)
+    
+    # Try to fit the model, handle potential errors
+    tryCatch({
+      # Fit GEE model with Poisson regression
+      model <- geeglm(formula_obj, 
+                      data = secondary_long,
+                      family = poisson(link = "log"),
+                      id = ptid,
+                      corstr = "exchangeable")
+      
+      # Extract model summary
+      model_summary <- summary(model)
+      
+      # Get coefficient, std error and p-value for the predictor
+      coef_data <- coef(model_summary)
+      
+      # Skip intercept, get row for predictor
+      if (nrow(coef_data) > 1) {
+        predictor_row <- coef_data[2, ]
+        
+        # Store results
+        results <- rbind(results, data.frame(
+          outcome = outcome,
+          predictor = predictor,
+          estimate = predictor_row[1],
+          std_error = predictor_row[2],
+          p_value = predictor_row[4],
+          stringsAsFactors = FALSE
+        ))
+        
+        # Print results
+        cat("Outcome:", outcome, "| Predictor:", predictor, 
+            "| Estimate:", round(predictor_row[1], 4),
+            "| p-value:", round(predictor_row[4], 4), "\n")
+      }
+    }, error = function(e) {
+      cat("Error in model for outcome:", outcome, "and predictor:", predictor, "-", e$message, "\n")
+    })
+  }
+}
+
+# Display the final results table
+print(results)
+
+## Associated univariable with ut:
+### emp_coded, age
+
+## Associated univariable with detect_tfv
+### edu 
+
+## print full univariable models for these variables 
+## URINE
+## emp_coded
+emp_m <- gee(ut_result ~ emp_coded,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = secondary_long)
+
+summary_emp_m <- summary(emp_m)
+
+# Code for calculating p-values from gee()
+z_values_emp <- summary_emp_m$coefficients[, "Robust z"]
+p_values_emp <- 2*pnorm(-abs(z_values_emp))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_emp <- summary(emp_m)$coefficients[, 1]
+relative_risks_emp <- exp(summary_emp_m$coefficients[, 1])
+robust_ses_emp <- summary_emp_m$coefficients[, "Robust S.E."]
+lower_ci_emp <- relative_risks_emp - 1.96 * robust_ses_emp
+upper_ci_emp <- relative_risks_emp + 1.96 * robust_ses_emp
+names_emp <- rownames(summary_emp_m$coefficients)
+
+emp_results <- data.frame(
+  Term = names_emp,
+  Estimate = round(exp(coefficients_emp), 3), 
+  Robust_SE = round(robust_ses_emp, 3),
+  z_value = round(z_values_emp, 3),
+  p_value = round(p_values_emp, 3),
+  CI_Lower = round(lower_ci_emp, 3),
+  CI_Upper = round(upper_ci_emp, 3)
+)
+
+flextable(emp_results)
+
+## age
+age_m <- gee(ut_result ~ age,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = secondary_long)
+
+summary_age_m <- summary(age_m)
+
+# Code for calculating p-values from gee()
+z_values_age <- summary_age_m$coefficients[, "Robust z"]
+p_values_age <- 2*pnorm(-abs(z_values_age))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_age <- summary(age_m)$coefficients[, 1]
+relative_risks_age <- exp(summary_age_m$coefficients[, 1])
+robust_ses_age <- summary_age_m$coefficients[, "Robust S.E."]
+lower_ci_age <- relative_risks_age - 1.96 * robust_ses_age
+upper_ci_age <- relative_risks_age + 1.96 * robust_ses_age
+names_age <- rownames(summary_age_m$coefficients)
+
+age_results <- data.frame(
+  Term = names_age,
+  Estimate = round(exp(coefficients_age), 3), 
+  Robust_SE = round(robust_ses_age, 3),
+  z_value = round(z_values_age, 3),
+  p_value = round(p_values_age, 3),
+  CI_Lower = round(lower_ci_age, 3),
+  CI_Upper = round(upper_ci_age, 3)
+)
+
+flextable(age_results)
+
+## Hair
+## edu
+edu_m <- gee(detect_tfv ~ edu,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = secondary_long)
+
+summary_edu_m <- summary(edu_m)
+
+# Code for calculating p-values from gee()
+z_values_edu <- summary_edu_m$coefficients[, "Robust z"]
+p_values_edu <- 2*pnorm(-abs(z_values_edu))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_edu <- summary(edu_m)$coefficients[, 1]
+relative_risks_edu <- exp(summary_edu_m$coefficients[, 1])
+robust_ses_edu <- summary_edu_m$coefficients[, "Robust S.E."]
+lower_ci_edu <- relative_risks_edu - 1.96 * robust_ses_edu
+upper_ci_edu <- relative_risks_edu + 1.96 * robust_ses_edu
+names_edu <- rownames(summary_edu_m$coefficients)
+
+edu_results <- data.frame(
+  Term = names_edu,
+  Estimate = round(exp(coefficients_edu), 3), 
+  Robust_SE = round(robust_ses_edu, 3),
+  z_value = round(z_values_edu, 3),
+  p_value = round(p_values_edu, 3),
+  CI_Lower = round(lower_ci_edu, 3),
+  CI_Upper = round(upper_ci_edu, 3)
+)
+
+flextable(edu_results)
+
+## run forward selection with these variables only 
+
+```
+
+
+## Forward Selection
+### Urine
+```{r}
+forward_selection_vars <- c("edu", "emp_coded", "age", "detect_tfv", "ut_result", 
+                            "group_new", "wilson_adh_scaled_sd", "ptid")
+
+multivar_data <- secondary_long[forward_selection_vars]
+
+### Urine Assay
+# Remove NAs
+multivar_data <-multivar_data[complete.cases(multivar_data),]
+ut_multivar <- multivar_data %>% select(-detect_tfv)
+
+## Manual stepwise
+
+# Start with minimum model
+min_model_multivar <- geeglm(ut_result ~ group_new,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = ut_multivar)
+QIC(min_model_multivar)
+
+# Add in Wilson ADH
+wilson_model_multivar <- geeglm(ut_result ~ group_new + wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = ut_multivar)
+QIC(wilson_model_multivar)
+
+# Add in employment status 
+emp_model_multivar <- geeglm(ut_result ~ group_new + wilson_adh_scaled_sd + emp_coded,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = ut_multivar)
+# QIC is higher thn just Wilson ADH
+QIC(emp_model_multivar)
+
+# Remove emp and add in age
+age_model_multivar <- geeglm(ut_result ~ group_new + wilson_adh_scaled_sd + age,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = ut_multivar)
+# Compare QICs
+QIC(wilson_model_multivar)
+# Age is lower 
+QIC(age_model_multivar)
+
+# Add all in
+full_model_multivar <- geeglm(ut_result ~ group_new + emp_coded + age + wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = ut_multivar)
+# Adding in emp has higher QIC
+QIC(full_model_multivar)
+
+## Print full model with age
+full_m <- gee(ut_result ~ group_new + wilson_adh_scaled_sd + age,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = secondary_long)
+
+summary_full_m <- summary(full_m)
+
+# Code for calculating p-values from gee()
+z_values_full <- summary_full_m$coefficients[, "Robust z"]
+p_values_full <- 2*pnorm(-abs(z_values_full))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_full <- summary(full_m)$coefficients[, 1]
+relative_risks_full <- exp(summary_full_m$coefficients[, 1])
+robust_ses_full <- summary_full_m$coefficients[, "Robust S.E."]
+lower_ci_full <- relative_risks_full - 1.96 * robust_ses_full
+upper_ci_full <- relative_risks_full + 1.96 * robust_ses_full
+names_full <- rownames(summary_full_m$coefficients)
+
+full_results <- data.frame(
+  Term = names_full,
+  Estimate = round(exp(coefficients_full), 3), 
+  Robust_SE = round(robust_ses_full, 3),
+  z_value = round(z_values_full, 3),
+  p_value = round(p_values_full, 3),
+  CI_Lower = round(lower_ci_full, 3),
+  CI_Upper = round(upper_ci_full, 3)
+)
+
+flextable(full_results)
+```
+
+### Hair Forward Selection
+```{r}
+### Urine Assay
+# Remove NAs
+multivar_data <-multivar_data[complete.cases(multivar_data),]
+hr_multivar <- multivar_data %>% select(-ut_result)
+
+## Manual stepwise
+
+# Start with minimum model
+min_model_hr <- geeglm(detect_tfv ~ group_new,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hr_multivar)
+QIC(min_model_hr)
+
+# Add in Wilson ADH
+wilson_model_hr <- geeglm(detect_tfv ~ group_new + wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hr_multivar)
+QIC(wilson_model_hr)
+
+# Add in edu
+edu_model_hr <- geeglm(detect_tfv ~ group_new + wilson_adh_scaled_sd + edu,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hr_multivar)
+# QIC is lower than just Wilson ADH
+QIC(edu_model_hr)
+
+# Just edu by itself
+edu_model2_hr <- geeglm(detect_tfv ~ group_new + edu,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hr_multivar)
+# QIC is higher than above
+QIC(edu_model2_hr)
+
+## Print full model with education status
+full_m_hr <- gee(detect_tfv ~ group_new + wilson_adh_scaled_sd + edu,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = secondary_long)
+
+summary_full_m_hr <- summary(full_m_hr)
+
+# Code for calculating p-values from gee()
+z_values_full_hr <- summary_full_m_hr$coefficients[, "Robust z"]
+p_values_full_hr <- 2*pnorm(-abs(z_values_full_hr))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_full_hr <- summary(full_m_hr)$coefficients[, 1]
+relative_risks_full_hr <- exp(summary_full_m_hr$coefficients[, 1])
+robust_ses_full_hr <- summary_full_m_hr$coefficients[, "Robust S.E."]
+lower_ci_full_hr <- relative_risks_full_hr - 1.96 * robust_ses_full_hr
+upper_ci_full_hr <- relative_risks_full_hr + 1.96 * robust_ses_full_hr
+names_full_hr <- rownames(summary_full_m_hr$coefficients)
+
+full_results_hr <- data.frame(
+  Term = names_full_hr,
+  Estimate = round(exp(coefficients_full_hr), 3), 
+  Robust_SE = round(robust_ses_full_hr, 3),
+  z_value = round(z_values_full_hr, 3),
+  p_value = round(p_values_full_hr, 3),
+  CI_Lower = round(lower_ci_full_hr, 3),
+  CI_Upper = round(upper_ci_full_hr, 3)
+)
+
+flextable(full_results_hr)
+```
+
+### Full Models for Both Results
+```{r}
+#Urine
+m_ut <- gee(ut_result ~ group_new + wilson_adh_scaled_sd + edu + age,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = secondary_long)
+
+summary_m_ut <- summary(m_ut)
+
+# Code for calculating p-values from gee()
+z_values_m_ut <- summary_m_ut$coefficients[, "Robust z"]
+p_values_m_ut <- 2*pnorm(-abs(z_values_m_ut))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_m_ut <- summary(m_ut)$coefficients[, 1]
+relative_risks_m_ut <- exp(summary_m_ut$coefficients[, 1])
+robust_ses_m_ut <- summary_m_ut$coefficients[, "Robust S.E."]
+lower_ci_m_ut <- relative_risks_m_ut - 1.96 * robust_ses_m_ut
+upper_ci_m_ut <- relative_risks_m_ut + 1.96 * robust_ses_m_ut
+names_m_ut <- rownames(summary_m_ut$coefficients)
+
+results_m_ut <- data.frame(
+  Term = names_m_ut,
+  Estimate = round(exp(coefficients_m_ut), 3), 
+  Robust_SE = round(robust_ses_m_ut, 3),
+  z_value = round(z_values_m_ut, 3),
+  p_value = round(p_values_m_ut, 3),
+  CI_Lower = round(lower_ci_m_ut, 3),
+  CI_Upper = round(upper_ci_m_ut, 3)
+)
+
+flextable(results_m_ut)
+
+# QIC
+m_ut_glm <- geeglm(ut_result ~ group_new + edu + age + wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = secondary_long)
+QIC(m_ut_glm)
+
+#Hair
+mhair <- gee(detect_tfv ~ group_new + wilson_adh_scaled_sd + edu + age,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = secondary_long)
+
+summary_mhair <- summary(mhair)
+
+# Code for calculating p-values from gee()
+z_values_mhair <- summary_mhair$coefficients[, "Robust z"]
+p_values_mhair <- 2*pnorm(-abs(z_values_mhair))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_mhair <- summary(mhair)$coefficients[, 1]
+relative_risks_mhair <- exp(summary_mhair$coefficients[, 1])
+robust_ses_mhair <- summary_mhair$coefficients[, "Robust S.E."]
+lower_ci_mhair <- relative_risks_mhair - 1.96 * robust_ses_mhair
+upper_ci_mhair <- relative_risks_mhair + 1.96 * robust_ses_mhair
+names_mhair <- rownames(summary_mhair$coefficients)
+
+results_mhair <- data.frame(
+  Term = names_mhair,
+  Estimate = round(exp(coefficients_mhair), 3), 
+  Robust_SE = round(robust_ses_mhair, 3),
+  z_value = round(z_values_mhair, 3),
+  p_value = round(p_values_mhair, 3),
+  CI_Lower = round(lower_ci_mhair, 3),
+  CI_Upper = round(upper_ci_mhair, 3)
+)
+
+flextable(results_mhair)
+
+# QIC
+mhair_glm <- geeglm(detect_tfv ~ group_new + edu + age + wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hr_multivar)
+QIC(mhair_glm)
+
+
+```
+
+
+# Additional Models
+```{r}
+# Association between adherence and continuous hair levels
+# Linear regression with a GEE model 
+cont_gee <- puma_all %>%
+  filter(complete.cases(detect_tfv, wilson_adh_scaled_sd, group_new, ptid)) %>% 
+  select(detect_tfv, wilson_adh_scaled_sd, group_new, ptid, tfvngml, visit)
+
+gee_hair_cont <- gee(tfvngml ~ wilson_adh_scaled_sd + group_new,
+                id = ptid,
+                family = gaussian(link = "identity"),
+                corstr = "exchangeable",
+                data = cont_gee)
+
+summary_gee_hair_cont <- summary(gee_hair_cont)
+
+# Code for calculating p-values from gee()
+z_values_cont <- summary_gee_hair_cont$coefficients[, "Robust z"]
+p_values_cont <- 2*pnorm(-abs(z_values_cont))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_cont <- summary(gee_hair_cont)$coefficients[, 1]
+robust_ses_cont <- summary_gee_hair_cont$coefficients[, "Robust S.E."]
+lower_ci_cont <- coefficients_cont - 1.96 * robust_ses_cont
+upper_ci_cont <- coefficients_cont + 1.96 * robust_ses_cont
+names_hair_sd_cont <- rownames(summary_gee_hair_cont$coefficients)
+
+hair_cont_results <- data.frame(
+  Term = names_hair_sd,
+  Coefficient = round(coefficients_cont, 3), 
+  Robust_SE = round(robust_ses_cont, 3),
+  z_value = round(z_values_cont, 3),
+  p_value = round(p_values_cont, 3),
+  CI_Lower = round(lower_ci_cont, 3),
+  CI_Upper = round(upper_ci_cont, 3)
+)
+
+flextable(hair_cont_results)
+```
+
+## Association with Categorical Hair Levels
+```{r}
+hair_model_cat <- gee(hair3numeric ~ wilson_adh_scaled_sd + group_new,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hair_gee_data)
+
+summary_hair_cat <- summary(hair_model_cat)
+
+# Code for calculating p-values from gee()
+z_hair_cat <- summary_hair_cat$coefficients[, "Robust z"]
+p_hair_cat <- 2*pnorm(-abs(z_hair_cat))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_hair_cat <- summary(hair_model_cat)$coefficients[, 1]
+relative_risks_hair_cat <- exp(summary_hair_cat$coefficients[, 1])
+robust_ses_hair_cat <- summary_hair_cat$coefficients[, "Robust S.E."]
+lower_ci_hair_cat <- relative_risks_hair_cat - 1.96 * robust_ses_hair_cat
+upper_ci_hair_cat <- relative_risks_hair_cat + 1.96 * robust_ses_hair_cat
+names_hair_cat <- rownames(summary_hair_cat$coefficients)
+
+hair_cat_results <- data.frame(
+  Term = names_hair_cat,
+  Estimate = round(exp(coefficients_hair_cat), 3), 
+  Robust_SE = round(robust_ses_hair_cat, 3),
+  z_value = round(z_hair_cat, 3),
+  p_value = round(p_hair_cat, 3),
+  CI_Lower = round(lower_ci_hair_cat, 3),
+  CI_Upper = round(upper_ci_hair_cat, 3)
+)
+
+flextable(hair_cat_results)
+
+## Using binary (less than 3, >= 4)
+hair_gee_data <- hair_gee_data %>% mutate(hair2code = case_when(hair3numeric == 1 ~ 0,
+                                                                hair3numeric == 2 ~ 0,
+                                                                hair3numeric == 3 ~ 1))
+
+hair_model_bin <- gee(hair2code ~ wilson_adh_scaled_sd + group_new,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hair_gee_data)
+
+summary_hair_bin <- summary(hair_model_bin)
+
+# Code for calculating p-values from gee()
+z_hair_bin <- summary_hair_bin$coefficients[, "Robust z"]
+p_hair_bin <- 2*pnorm(-abs(z_hair_bin))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_hair_bin <- summary(hair_model_bin)$coefficients[, 1]
+relative_risks_hair_bin <- exp(summary_hair_bin$coefficients[, 1])
+robust_ses_hair_bin <- summary_hair_bin$coefficients[, "Robust S.E."]
+lower_ci_hair_bin <- relative_risks_hair_bin - 1.96 * robust_ses_hair_bin
+upper_ci_hair_bin <- relative_risks_hair_bin + 1.96 * robust_ses_hair_bin
+names_hair_bin <- rownames(summary_hair_bin$coefficients)
+
+hair_bin_results <- data.frame(
+  Term = names_hair_cat,
+  Estimate = round(exp(coefficients_hair_bin), 3), 
+  Robust_SE = round(robust_ses_hair_bin, 3),
+  z_value = round(z_hair_bin, 3),
+  p_value = round(p_hair_bin, 3),
+  CI_Lower = round(lower_ci_hair_bin, 3),
+  CI_Upper = round(upper_ci_hair_bin, 3)
+)
+
+flextable(hair_bin_results)
+```
+
+
+# Visualizations
+## Adherence Line Graphs
+```{r}
+# Wilson score line graph
+line_graph_df <- puma_all %>% dplyr::select(ptid, group_new, wilson_adh, visit)
+
+means_line_graph <- line_graph_df %>% group_by(visit, group_new) %>% 
+  summarise(mean_score = mean(wilson_adh, na.rm = TRUE),
+            sd_score = sd(wilson_adh, na.rm = TRUE)) %>%
+              ungroup()
+
+means_line_graph_t <- line_graph_df %>% group_by(visit) %>% 
+  summarise(mean_score = mean(wilson_adh, na.rm = TRUE),
+            sd_score = sd(wilson_adh, na.rm = TRUE)) %>%
+              ungroup()
+
+## Total sample
+# Create labels with mean and sd
+means_line_graph_t$label <- sprintf("%.1f\n(SD: %.1f)", means_line_graph_t$mean_score, means_line_graph_t$sd_score)
+
+# Add a small offset to position labels slightly above the points
+means_line_graph_t$label_y <- means_line_graph_t$mean_score + 2
+
+ggplot(means_line_graph_t, aes(x = visit, y = mean_score)) +
+  geom_line(size = 1) +
+  geom_point(size = 3) +
+  geom_text(
+    aes(y = label_y, label = label),
+    size = 3,
+    vjust = "bottom"
+  ) +
+  scale_x_continuous(breaks = 1:5) +
+  labs(
+    title = "Mean Adherence Score by Visit",
+    x = "Visit",
+    y = "Mean Wilson Adherence Score"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    legend.title = element_blank()
+  ) +
+  coord_cartesian(ylim = c(70, 95))  
+
+# Create labels with mean and sd
+means_line_graph$label <- sprintf("%.1f\n(SD: %.1f)", means_line_graph$mean_score, means_line_graph$sd_score)
+
+# Add a small offset to position labels slightly above the points
+means_line_graph$label_y <- ifelse(means_line_graph$group_new == "Intervention",
+                                   means_line_graph$mean_score + .5,
+                                   ifelse((means_line_graph$visit == 1 | means_line_graph$visit == 2 | means_line_graph$visit == 3) & 
+                                            (means_line_graph$group_new == "Standard of Care"), 
+                                          means_line_graph$mean_score - 2, means_line_graph$mean_score + .5))
+
+# Create the line plot
+ggplot(means_line_graph, aes(x = visit, y = mean_score, color = group_new, group = group_new)) +
+  geom_line(size = 1) +
+  geom_point(size = 3) +
+  geom_text(
+    aes(y = label_y, label = label),
+    size = 3,
+    vjust = "bottom"
+  ) +
+  scale_x_continuous(breaks = 1:5) +
+  scale_color_manual(values = c("Intervention" = "darkorchid4", "Standard of Care" = "skyblue4")) +
+  labs(
+    title = "Mean Adherence Score by Visit and Study Arm",
+    x = "Visit",
+    y = "Mean Wilson Adherence Score",
+    color = "Study Arm"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    legend.title = element_blank()
+  ) +
+  coord_cartesian(ylim = c(70, 95)) 
+```
+
+## ROC Curves
+### Urine
+```{r}
+# Create ROC object
+roc_urine <- roc(month12$ut_result, month12$wilson_adh)
+roc_hair <- roc(month12$detect_tfv, month12$wilson_adh)
+roc_hair2 <- roc(month12$hair2_coded, month12$wilson_adh)
+
+# Get coordinates for different cutoffs
+coords_urine <- coords(roc_urine, "all", ret = c("threshold", "sensitivity", "specificity"))
+
+# Calculate AUC values
+auc_urine <- auc(roc_urine)
+auc_hair <- auc(roc_hair)
+auc_hair2 <- auc(roc_hair2)
+
+# Format AUC values with 3 decimal places
+auc_urine_formatted <- round(auc_urine, 3)
+auc_hair_formatted <- round(auc_hair, 3)
+auc_hair2_formatted <- round(auc_hair2, 3)
+
+# Create enhanced legend text that includes AUC values
+urine_legend <- paste0("Urine (Neg/Pos) (AUC = ", auc_urine_formatted, ")")
+hair_legend <- paste0("Hair (Neg/Pos) (AUC = ", auc_hair_formatted, ")")
+hair2_legend <- paste0("Hair (Neg + Low/High) (AUC = ", auc_hair2_formatted, ")")
+
+# Plot ROC curves with AUC values in the legend
+plot(roc_urine, col = "blue", 
+     main = "ROC Curves for Adherence Prediction", 
+     lwd = 2)
+plot(roc_hair, col = "red", add = TRUE, lwd = 2)
+plot(roc_hair2, col = "darkgreen", add = TRUE, lwd = 2)
+# Add enhanced legend with AUC values
+legend("bottomright", 
+       legend = c(urine_legend, hair_legend, hair2_legend), 
+       col = c("blue", "red", "darkgreen"), 
+       lwd = 2)
+
+
+plot(roc_hair2, col = "darkgreen", lwd = 2,
+     main = "ROC Curve for Adherence Predicition of Low vs High PrEP Adherence")
+legend("bottomright",
+       legend = hair2_legend,
+       col = "darkgreen",
+       lwd = 2)
+
+# Plot ROC curves
+plot(roc_urine, col = "blue", main = "ROC Curves for Adherence Prediction", print.auc = TRUE)
+plot(roc_hair, col = "red", add = TRUE, print.auc = TRUE)
+legend("bottomright", legend = c("Urine Analysis", "Hair Analysis"), 
+       col = c("blue", "red"), lwd = 2)
+
+# Youden's J statistic (maximizes sensitivity + specificity - 1)
+best_cutoff_urine <- coords(roc_urine, "best", ret = "threshold")
+
+# Find cutoff that gives sensitivity closest to 90%
+coords_df <- as.data.frame(coords(roc_urine, "all"))
+closest_to_90 <- coords_df[which.min(abs(coords_df$sensitivity - 0.9)),]
+cutoff_90sens_urine <- closest_to_90$threshold
+
+# Create a sequence of cutoffs
+cutoffs_urine <- seq(0, 100, by = 10)
+
+# Pre-allocate vectors instead of a dataframe
+sensitivity_values <- numeric(length(cutoffs_urine))
+specificity_values <- numeric(length(cutoffs_urine))
+
+# Calculate sensitivity and specificity for each cutoff
+for(i in 1:length(cutoffs_urine)) {
+  cutoff <- cutoffs_urine[i]
+  # Get coordinates for this specific threshold
+  coords_at_cutoff <- coords(roc_urine, cutoffs_urine[i], input = "threshold")
+  
+  # Store values
+  sensitivity_values[i] <- coords_at_cutoff$sensitivity
+  specificity_values[i] <- coords_at_cutoff$specificity
+}
+
+# Create final dataframe
+results_urine <- data.frame(
+  wilson_adherence_cutoff = round(cutoffs_urine, 3),
+  sensitivity = round(sensitivity_values, 3),
+  specificity = round(specificity_values, 3)
+)
+
+
+```
+### Hair (Neg/Pos)
+```{r}
+# Get coordinates for different cutoffs
+coords_hair <- coords(roc_hair, "all", ret = c("threshold", "sensitivity", "specificity"))
+
+# Youden's J statistic (maximizes sensitivity + specificity - 1)
+best_cutoff_hair <- coords(roc_hair, "best", ret = "threshold")
+
+# Create a sequence of cutoffs
+cutoffs_hair <- seq(0, 100, by = 10)
+
+# Pre-allocate vectors instead of a dataframe
+sensitivity_values_hair <- numeric(length(cutoffs_hair))
+specificity_values_hair <- numeric(length(cutoffs_hair))
+
+# Calculate sensitivity and specificity for each cutoff
+for(i in 1:length(cutoffs_hair)) {
+  cutoff <- cutoffs_hair[i]
+  # Get coordinates for this specific threshold
+  coords_at_cutoff <- coords(roc_hair, cutoffs_hair[i], input = "threshold")
+  
+  # Store values
+  sensitivity_values_hair[i] <- coords_at_cutoff$sensitivity
+  specificity_values_hair[i] <- coords_at_cutoff$specificity
+}
+
+# Create final dataframe
+results_hair <- data.frame(
+  wilson_adherence_cutoff = round(cutoffs_hair, 3),
+  sensitivity = round(sensitivity_values_hair, 3),
+  specificity = round(specificity_values_hair, 3)
+)
+
+results_hair
+```
+
+### Hair (Low/High)
+```{r}
+# Get coordinates for different cutoffs
+coords_hair2 <- coords(roc_hair2, "all", ret = c("threshold", "sensitivity", "specificity"))
+
+# Youden's J statistic (maximizes sensitivity + specificity - 1)
+best_cutoff_hair2 <- coords(roc_hair2, "best", ret = "threshold")
+
+# Pre-allocate vectors instead of a dataframe
+sensitivity_values_hair2 <- numeric(length(cutoffs_hair))
+specificity_values_hair2 <- numeric(length(cutoffs_hair))
+
+# Calculate sensitivity and specificity for each cutoff
+for(i in 1:length(cutoffs_hair)) {
+  cutoff <- cutoffs_hair[i]
+  # Get coordinates for this specific threshold
+  coords_at_cutoff <- coords(roc_hair2, cutoffs_hair[i], input = "threshold")
+  
+  # Store values
+  sensitivity_values_hair2[i] <- coords_at_cutoff$sensitivity
+  specificity_values_hair2[i] <- coords_at_cutoff$specificity
+}
+
+# Create final dataframe
+results_hair2 <- data.frame(
+  wilson_adherence_cutoff = round(cutoffs_hair, 3),
+  sensitivity = round(sensitivity_values_hair2, 3),
+  specificity = round(specificity_values_hair2, 3)
+)
+
+results_hair2
+```
+
+### Combined ROC -- Hair + Urine
+```{r}
+# Create a logistic regression model with both predictors
+combined_model <- glm(hair2_coded ~ wilson_adh + ut_result, 
+                     family = poisson(link = "log"), 
+                     data = month12)
+
+# Get predicted probabilities from the model
+# Smaller dataframe
+combined_roc_data <- month12 %>% select(hair2_coded, hair2code, wilson_adh) %>% filter(!is.na(hair2_coded))
+combined_roc_data$predicted_probs <- predict(combined_model, type = "response")
+
+# Create ROC curve using these predicted probabilities
+combined_roc <- roc(combined_roc_data$hair2_coded, combined_roc_data$predicted_probs)
+
+# Plot the ROC curve
+plot(combined_roc, main = "ROC Curve for Combined Predictors",
+     col = "blue", lwd = 2)
+
+# Calculate and display AUC
+auc_combined <- auc(combined_roc)
+legend("bottomright", 
+       legend = paste0("AUC = ", round(auc_combined, 3)),
+       col = "blue", lwd = 2)
+
+# Youden's J statistic (maximizes sensitivity + specificity - 1)
+best_cutoff_combined <- coords(combined_roc, "best", ret = "threshold")
+
+cutoffs <- seq(0, 1, by = 0.1)  # Cutoffs from 0 to 1 in increments of 0.1
+
+# Pre-allocate vectors instead of a dataframe
+sensitivity_values_combined <- numeric(length(cutoffs))
+specificity_values_combined <- numeric(length(cutoffs))
+
+# Calculate sensitivity and specificity for each cutoff
+for(i in 1:length(cutoffs)) {
+  cutoff <- cutoffs[i]
+  # Get coordinates for this specific threshold
+  coords_at_cutoff <- coords(combined_roc, cutoffs[i], input = "threshold")
+  
+  # Store values
+  sensitivity_values_combined[i] <- coords_at_cutoff$sensitivity
+  specificity_values_combined[i] <- coords_at_cutoff$specificity
+}
+
+# Create final dataframe
+results_combined <- data.frame(
+  cutoff = round(cutoffs, 3),
+  sensitivity = round(sensitivity_values_combined, 3),
+  specificity = round(specificity_values_combined, 3)
+)
+
+results_combined
+```
+
+```{r}
+# Get all coordinates
+coords_all <- coords(combined_roc, "all", ret = c("threshold", "sensitivity", "specificity"))
+
+# Convert to a dataframe
+coords_df <- as.data.frame(coords_all)
+
+# Calculate Youden's Index
+coords_df$youden_index <- coords_df$sensitivity + coords_df$specificity - 1
+
+# Round values
+coords_df <- coords_df %>%
+  mutate(
+    threshold = round(threshold, 3),
+    sensitivity = round(sensitivity, 3),
+    specificity = round(specificity, 3),
+    youden_index = round(youden_index, 3)
+  )
+
+# Display in a table
+kable(coords_df[seq(1, nrow(coords_df), length.out = 20), ], 
+      caption = "Sensitivity and Specificity at Selected Probability Thresholds")
+```
+
+
+## Alluvial Plot
+```{r}
+alluvial_data <- puma_all %>% dplyr::select(ptid, group_new, wilson_cat, ut_result, visit_coded) %>%
+  filter(!is.na(ut_result))
+
+alluvial_plot <- ggplot(alluvial_data, 
+       aes(x = visit_coded, stratum = wilson_cat, alluvium = ptid, fill = wilson_cat, label = wilson_cat)) +
+  scale_fill_manual(values = c("hotpink4", "dodgerblue4", "chartreuse4", "purple4", "lightblue4")) +
+       geom_flow(stat = "alluvium", lode.guidance = "rightleft",color = "darkgrey") +
+       geom_stratum() +
+      facet_wrap(~ ut_result) +  # Stratify by arm
+       ylab("Frequency") +
+  xlab("Visit") +
+       ggtitle("Wilson Adherence over Study Period by Urine Results") +
+      labs(fill = "Wilson Adherence") +
+       theme_light()
+
+alluvial_plot
+```
+
+
+# Stratified Hair Level Categories by Study Arm Visualization
+```{r}
+# Visualization at Month 12
+aggregated_data <- month12 %>% filter(!is.na(hair3code)) %>%
+  group_by(hair3code) %>%
+  summarise(
+    mean_adh = mean(wilson_adh, na.rm = TRUE),
+    sd_adh = sd(wilson_adh, na.rm = TRUE)
+  )
+
+month12_plot <- ggplot(aggregated_data, aes(x = hair3code, y = mean_adh)) +
+  geom_bar(stat = "identity", fill = "slategray2") +
+  labs(
+    title = "Month 12",
+    x = "PrEP Doses per Week as Estimated by Hair TFV Levels",
+    y = "Mean Wilson Adherence Score"
+  ) +
+  theme_minimal() +
+  # Add mean values with SD in parentheses as text in the center of the bars
+  geom_text(aes(label = sprintf("%.2f (%.2f)", mean_adh, sd_adh)), 
+            vjust = -0.5,     
+            color = "black") + 
+  scale_y_continuous(expand = expansion(mult = c(0, 0.2)))
+
+month12_plot
+
+month1_data <- puma_all %>% filter(visit == 1)
+month1_aggregate <- month1_data %>% filter(!is.na(hair3code)) %>%
+  group_by(hair3code) %>%
+  summarise(
+    mean_adh = mean(wilson_adh, na.rm = TRUE),
+    sd_adh = sd(wilson_adh, na.rm = TRUE)
+  )
+
+month1_plot <- ggplot(month1_aggregate, aes(x = hair3code, y = mean_adh)) +
+  geom_bar(stat = "identity", fill = "slategray2") +
+  labs(
+    title = "Baseline",
+    x = "PrEP Doses per Week as Estimated by Hair TFV Levels",
+    y = "Mean Wilson Adherence Score"
+  ) +
+  theme_minimal() +
+  # Add mean values with SD in parentheses as text in the center of the bars
+  geom_text(aes(label = sprintf("%.2f (%.2f)", mean_adh, sd_adh)), 
+            vjust = -0.5,     
+            color = "black") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.2)))
+
+month1_plot
+
+month6_data <- puma_all %>% filter(visit == 3)
+month6_aggregate <- month6_data %>% filter(!is.na(hair3code)) %>%
+  group_by(hair3code) %>%
+  summarise(
+    mean_adh = mean(wilson_adh, na.rm = TRUE),
+    sd_adh = sd(wilson_adh, na.rm = TRUE)
+  )
+
+month6_plot <- ggplot(month6_aggregate, aes(x = hair3code, y = mean_adh)) +
+  geom_bar(stat = "identity", fill = "slategray2") +
+  labs(
+    title = "Month 6",
+    x = "PrEP Doses per Week as Estimated by Hair TFV Levels",
+    y = "Mean Wilson Adherence Score"
+  ) +
+  theme_minimal() +
+  # Add mean values with SD in parentheses as text in the center of the bars
+  geom_text(aes(label = sprintf("%.2f (%.2f)", mean_adh, sd_adh)), 
+            vjust = -0.5,     
+            color = "black") + 
+  scale_y_continuous(expand = expansion(mult = c(0, 0.2)))
+
+month6_plot
+
+grid.arrange(month1_plot, month6_plot, month12_plot, ncol = 2)
+```
+
+# Stratified Analysis by Study Group Models
+```{r}
+# Analysis
+## Separate out groups 
+poc_hair <- hair_gee_data %>% filter(group_new == "Intervention")
+soc_hair <- hair_gee_data %>% filter(group_new == "Standard of Care")
+
+## HAIR
+### POC
+poc_h_gee <- gee(detect_tfv ~ wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = poc_hair)
+
+summary_poc_h <- summary(poc_h_gee)
+
+# Code for calculating p-values from gee()
+z_hair_poc <- summary_poc_h$coefficients[, "Robust z"]
+p_hair_poc <- 2*pnorm(-abs(z_hair_poc))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_hair_poc <- summary(poc_h_gee)$coefficients[, 1]
+relative_risks_hair_poc <- exp(summary_poc_h$coefficients[, 1])
+robust_ses_hair_poc <- summary_poc_h$coefficients[, "Robust S.E."]
+lower_ci_hair_poc <- relative_risks_hair_poc - 1.96 * robust_ses_hair_poc
+upper_ci_hair_poc <- relative_risks_hair_poc + 1.96 * robust_ses_hair_poc
+names_hair_poc <- rownames(summary_poc_h$coefficients)
+
+hair_poc_results <- data.frame(
+  Term = names_hair_poc,
+  Estimate = round(exp(coefficients_hair_poc), 3), 
+  Robust_SE = round(robust_ses_hair_poc, 3),
+  z_value = round(z_hair_poc, 3),
+  p_value = round(p_hair_poc, 3),
+  CI_Lower = round(lower_ci_hair_poc, 3),
+  CI_Upper = round(upper_ci_hair_poc, 3)
+)
+
+flextable(hair_poc_results)
+
+### SOC
+soc_h_gee <- gee(detect_tfv ~ wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = soc_hair)
+
+summary_soc_h <- summary(soc_h_gee)
+
+# Code for calculating p-values from gee()
+z_hair_soc <- summary_soc_h$coefficients[, "Robust z"]
+p_hair_soc <- 2*pnorm(-abs(z_hair_soc))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_hair_soc <- summary(soc_h_gee)$coefficients[, 1]
+relative_risks_hair_soc <- exp(summary_soc_h$coefficients[, 1])
+robust_ses_hair_soc <- summary_soc_h$coefficients[, "Robust S.E."]
+lower_ci_hair_soc <- relative_risks_hair_soc - 1.96 * robust_ses_hair_soc
+upper_ci_hair_soc <- relative_risks_hair_soc + 1.96 * robust_ses_hair_soc
+names_hair_soc <- rownames(summary_soc_h$coefficients)
+
+hair_soc_results <- data.frame(
+  Term = names_hair_soc,
+  Estimate = round(exp(coefficients_hair_soc), 3), 
+  Robust_SE = round(robust_ses_hair_soc, 3),
+  z_value = round(z_hair_soc, 3),
+  p_value = round(p_hair_soc, 3),
+  CI_Lower = round(lower_ci_hair_soc, 3),
+  CI_Upper = round(upper_ci_hair_soc, 3)
+)
+
+flextable(hair_soc_results)
+
+# URINE 
+## Separate out groups 
+poc_ut <- ut_gee_data %>% filter(group_new == "Intervention")
+soc_ut <- ut_gee_data %>% filter(group_new == "Standard of Care")
+### SOC
+soc_ut_gee <- gee(ut_result ~ wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = soc_ut)
+
+summary_soc_ut <- summary(soc_ut_gee)
+
+# Code for calculating p-values from gee()
+z_ut_soc <- summary_soc_ut$coefficients[, "Robust z"]
+p_ut_soc <- 2*pnorm(-abs(z_ut_soc))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_ut_soc <- summary(soc_ut_gee)$coefficients[, 1]
+relative_risks_ut_soc <- exp(summary_soc_ut$coefficients[, 1])
+robust_ses_ut_soc <- summary_soc_ut$coefficients[, "Robust S.E."]
+lower_ci_ut_soc <- relative_risks_ut_soc - 1.96 * robust_ses_ut_soc
+upper_ci_ut_soc <- relative_risks_ut_soc + 1.96 * robust_ses_ut_soc
+names_ut_soc <- rownames(summary_soc_ut$coefficients)
+
+ut_soc_results <- data.frame(
+  Term = names_ut_soc,
+  Estimate = round(exp(coefficients_ut_soc), 3), 
+  Robust_SE = round(robust_ses_ut_soc, 3),
+  z_value = round(z_ut_soc, 3),
+  p_value = round(p_ut_soc, 3),
+  CI_Lower = round(lower_ci_ut_soc, 3),
+  CI_Upper = round(upper_ci_ut_soc, 3)
+)
+
+flextable(ut_soc_results)
+
+### POC
+poc_ut_gee <- gee(ut_result ~ wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = poc_ut)
+
+summary_poc_ut <- summary(poc_ut_gee)
+
+# Code for calculating p-values from gee()
+z_ut_poc <- summary_poc_ut$coefficients[, "Robust z"]
+p_ut_poc <- 2*pnorm(-abs(z_ut_poc))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_ut_poc <- summary(poc_ut_gee)$coefficients[, 1]
+relative_risks_ut_poc <- exp(summary_poc_ut$coefficients[, 1])
+robust_ses_ut_poc <- summary_poc_ut$coefficients[, "Robust S.E."]
+lower_ci_ut_poc <- relative_risks_ut_poc - 1.96 * robust_ses_ut_poc
+upper_ci_ut_poc <- relative_risks_ut_poc + 1.96 * robust_ses_ut_poc
+names_ut_poc <- rownames(summary_poc_ut$coefficients)
+
+ut_poc_results <- data.frame(
+  Term = names_ut_poc,
+  Estimate = round(exp(coefficients_ut_poc), 3), 
+  Robust_SE = round(robust_ses_ut_poc, 3),
+  z_value = round(z_ut_poc, 3),
+  p_value = round(p_ut_poc, 3),
+  CI_Lower = round(lower_ci_ut_poc, 3),
+  CI_Upper = round(upper_ci_ut_poc, 3)
+)
+
+flextable(ut_poc_results)
+
+# - LRT between relative risks from the SOC and POC
+# 		○ Interaction term for arm by self-report -- p-value for LRT if those RR are statistically significant 
+## Urine
+ut_lrt <- gee(ut_result ~ wilson_adh_scaled_sd + group_new + group_new*wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = ut_gee_data)
+
+summary_ut_lrt <- summary(ut_lrt)
+
+# Code for calculating p-values from gee()
+z_ut_lrt <- summary_ut_lrt$coefficients[, "Robust z"]
+p_ut_lrt <- 2*pnorm(-abs(z_ut_lrt))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_ut_lrt <- summary(ut_lrt)$coefficients[, 1]
+relative_risks_ut_lrt <- exp(summary_ut_lrt$coefficients[, 1])
+robust_ses_ut_lrt <- summary_ut_lrt$coefficients[, "Robust S.E."]
+lower_ci_ut_lrt <- relative_risks_ut_lrt - 1.96 * robust_ses_ut_lrt
+upper_ci_ut_lrt <- relative_risks_ut_lrt + 1.96 * robust_ses_ut_lrt
+names_ut_lrt <- rownames(summary_ut_lrt$coefficients)
+
+ut_lrt_results <- data.frame(
+  Term = names_ut_lrt,
+  Estimate = round(exp(coefficients_ut_lrt), 3), 
+  Robust_SE = round(robust_ses_ut_lrt, 3),
+  z_value = round(z_ut_lrt, 3),
+  p_value = round(p_ut_lrt, 3),
+  CI_Lower = round(lower_ci_ut_lrt, 3),
+  CI_Upper = round(upper_ci_ut_lrt, 3)
+)
+
+flextable(ut_lrt_results)
+
+### Hair
+hair_lrt <- gee(detect_tfv ~ wilson_adh_scaled_sd + group_new + group_new*wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hair_gee_data)
+
+summary_hair_lrt <- summary(hair_lrt)
+
+# Code for calculating p-values from gee()
+z_hair_lrt <- summary_hair_lrt$coefficients[, "Robust z"]
+p_hair_lrt <- 2*pnorm(-abs(z_hair_lrt))
+
+# Code for calculating RR and 95% CIs 
+# Coefficients: estimated marginal model on the logit scale; exponentiate to get RR
+coefficients_hair_lrt <- summary(hair_lrt)$coefficients[, 1]
+relative_risks_hair_lrt <- exp(summary_hair_lrt$coefficients[, 1])
+robust_ses_hair_lrt <- summary_hair_lrt$coefficients[, "Robust S.E."]
+lower_ci_hair_lrt <- relative_risks_hair_lrt - 1.96 * robust_ses_hair_lrt
+upper_ci_hair_lrt <- relative_risks_hair_lrt + 1.96 * robust_ses_hair_lrt
+names_hair_lrt <- rownames(summary_hair_lrt$coefficients)
+
+hair_lrt_results <- data.frame(
+  Term = names_hair_lrt,
+  Estimate = round(exp(coefficients_hair_lrt), 3), 
+  Robust_SE = round(robust_ses_hair_lrt, 3),
+  z_value = round(z_hair_lrt, 3),
+  p_value = round(p_hair_lrt, 3),
+  CI_Lower = round(lower_ci_hair_lrt, 3),
+  CI_Upper = round(upper_ci_hair_lrt, 3)
+)
+
+flextable(hair_lrt_results)
+```
+
+## Visualizations
+###
+```{r}
+# Visualization at Month 12
+#new data
+month12 <- month12 %>% mutate(hair_uncoded = case_when(detect_tfv == 0 ~ "Negative",
+                                                       detect_tfv == 1 ~ "Positive"),
+                              ut_uncoded = case_when(ut_result == 0 ~ "Negative",
+                                                     ut_result == 1 ~ "Positive"))
+
+month12$hair_uncoded <- factor(month12$hair_uncoded, levels = c("Negative", "Positive"))
+
+hair_viz <- month12 %>% filter(!is.na(detect_tfv))
+ut_viz <- month12 %>% filter(!is.na(ut_result))
+
+## Hair
+# Approach 1: Using facets for study groups
+hair_hist <- ggplot(hair_viz, aes(x = wilson_adh, fill = factor(hair_uncoded))) +
+  geom_histogram(position = "identity", alpha = 0.6, bins = 10) +
+  scale_fill_manual(values = c("#3498db", "#e74c3c"), 
+                    name = "PrEP Adherence (Hair)") +
+  facet_wrap(~group, ncol = 1) +
+  labs(title = "Distribution of Wilson Adherence Scores at Month 12",
+       subtitle = "By PrEP adherence (hair) and study arm",
+       x = "Wilson Adherence Score",
+       y = "Count") +
+  theme_minimal()
+
+hair_hist
+
+# Approach 2: Using density plots with different linetypes for study groups
+hair_density <- ggplot(hair_viz, aes(x = wilson_adh, fill = factor(hair_uncoded), 
+                linetype = factor(group))) +
+  geom_density(aes(color = factor(hair_uncoded)), alpha = 0.3) +
+  scale_fill_manual(values = c("#3498db", "#e74c3c"), 
+                   name = "PrEP Adherence (Hair)") +
+  scale_color_manual(values = c("#3498db", "#e74c3c"), 
+                    name = "PrEP Adherence (Hair)") +
+  scale_linetype_manual(values = c("solid", "dashed"),
+                       name = "Study Group") +
+   scale_y_continuous(expand = c(0, 0)) +  # This removes padding at the bottom
+  coord_cartesian(ylim = c(0, 0.06)) +
+  labs(title = "Distribution of Wilson Adherence Scores at Month 12",
+       subtitle = "By PrEP adherence (hair) and study arm",
+       x = "Wilson Adherence Score",
+       y = "Density") +
+  theme_minimal()
+
+hair_density
+
+## Urine
+# Approach 1: Using facets for study groups
+ut_hist <- ggplot(ut_viz, aes(x = wilson_adh, fill = factor(ut_uncoded))) +
+  geom_histogram(position = "identity", alpha = 0.6, bins = 10) +
+  scale_fill_manual(values = c("#3498db", "#e74c3c"), 
+                    name = "Urine Assay Result") +
+  facet_wrap(~group, ncol = 1) +
+  labs(title = "Distribution of Wilson Adherence Scores at Month 12",
+       subtitle = "By urine assay result and study arm",
+       x = "Wilson Adherence Score",
+       y = "Count") +
+  theme_minimal()
+
+ut_hist
+
+# Approach 2: Using density plots with different linetypes for study groups
+ut_density <- ggplot(ut_viz, aes(x = wilson_adh, fill = factor(ut_uncoded), 
+                linetype = factor(group))) +
+  geom_density(aes(color = factor(ut_uncoded)), alpha = 0.3) +
+  scale_fill_manual(values = c("#3498db", "#e74c3c"), 
+                   name = "Urine Assay Result") +
+  scale_color_manual(values = c("#3498db", "#e74c3c"), 
+                    name = "Urine Assay Result") +
+  scale_linetype_manual(values = c("solid", "dashed"),
+                       name = "Study Group") +
+  labs(title = "Distribution of Wilson Adherence Scores at Month 12",
+       subtitle = "By urine assay result and study arm",
+       x = "Wilson Adherence Score",
+       y = "Density") +
+  theme_minimal()
+
+ut_density
+```
+
+## To do
+- Separate out/clean up Markdown file 
+
