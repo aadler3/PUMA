@@ -1,0 +1,128 @@
+---
+title: "PUMA Presentation Statistics"
+output: html_document
+date: "2025-04-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Set up
+```{r, include=FALSE}
+#load packages
+library(dplyr)
+library(flextable)
+library(ggplot2)
+library(collapse)
+library(labelled)
+library(compareGroups)
+library(gee)
+library(geepack)
+library(pROC)
+library(ROCR)
+library(plotROC)
+library(gridExtra)
+library(kableExtra)
+library(ggalluvial)
+```
+
+# Load Data
+```{r}
+pathway <- "~/Library/CloudStorage/Box-Box/Puma Analysis/Analysis/Code"
+month12 <- readRDS(file.path(pathway, "/RDS/puma_month12.rds"))
+puma_all <- readRDS(file.path(pathway, "/RDS/puma_long_clean.rds"))
+
+output_path <- "~/Library/CloudStorage/Box-Box/Puma Analysis/Analysis/Code/Output"
+source("analysis_utilities.R")
+```
+
+# Re-running CROI Presenation Statistics
+```{r}
+table(month12$ut_result, useNA = "ifany")
+table(month12$detect_tfv, useNA = "ifany")
+
+month12_soc <- month12 %>% filter(group == 2)
+
+ut_adherence_stats <- summarize_adherence_by_biomarker(month12, "wilson_adh", "ut_result")
+print(ut_adherence_stats$t_test)
+cat("Urine positive (N=", ut_adherence_stats$positive$n, "): Mean=", 
+    round(ut_adherence_stats$positive$mean, 2), ", SD=", 
+    round(ut_adherence_stats$positive$sd, 2), "\n")
+cat("Urine negative (N=", ut_adherence_stats$negative$n, "): Mean=", 
+    round(ut_adherence_stats$negative$mean, 2), ", SD=", 
+    round(ut_adherence_stats$negative$sd, 2), "\n")
+
+hair_adherence_stats <- summarize_adherence_by_biomarker(month12, "wilson_adh", "detect_tfv")
+print(hair_adherence_stats$t_test)
+cat("Hair positive (N=", hair_adherence_stats$positive$n, "): Mean=", 
+    round(hair_adherence_stats$positive$mean, 2), ", SD=", 
+    round(hair_adherence_stats$positive$sd, 2), "\n")
+cat("Hair negative (N=", hair_adherence_stats$negative$n, "): Mean=", 
+    round(hair_adherence_stats$negative$mean, 2), ", SD=", 
+    round(hair_adherence_stats$negative$sd, 2), "\n")
+
+```
+
+# Updates for CROI Poster
+```{r}
+#Consider scaling the adherence score in your models, either by 10 or by the standard deviation so the relative risks are easier to interpret in one's head (it will also make the findings look more impressive)
+### Models are already scaled by 10 according to Deepalika
+
+# For the GEE models section
+# Hair model with scaled_sd
+hair_gee_data <- prepare_gee_data(
+  puma_all, 
+  outcome = "detect_tfv", 
+  predictors = c("wilson_adh_scaled_sd", "group_new"),
+  additional_vars = c("wilson_adh10", "wilson_adh", "mh14", "hair3numeric")
+)
+
+hair_sd_results <- run_gee_model(
+  hair_gee_data,
+  outcome = "detect_tfv",
+  predictors = c("wilson_adh_scaled_sd", "group_new")
+)
+
+flextable(hair_sd_results)
+
+# Urine model with scaled_sd
+ut_gee_data <- prepare_gee_data(
+  puma_all, 
+  outcome = "ut_result", 
+  predictors = c("wilson_adh_scaled_sd", "group_new"),
+  additional_vars = c("wilson_adh", "wilson_adh10", "mh14")
+)
+
+ut_sd_results <- run_gee_model(
+  ut_gee_data,
+  outcome = "ut_result",
+  predictors = c("wilson_adh_scaled_sd", "group_new")
+)
+
+flextable(ut_sd_results)
+
+#Consider generating confidence intervals for the mean adherence scores in figure 1. 
+  # Ignore for now? 
+
+#SD of age
+sd(baseline$age)
+  #9.369289
+
+#Bullet 6: please mention the p-values (and maybe even that they come from the t-tests) to highlight statistical significance. You can also mention those in the figure (or present the CIs as Matt suggested)
+  # p < 0.01 for both
+
+#I am suprised by the hair/score pvalue. It is 0.02 but the 95% CI goes right to 1.0. That seems odd to me. How can that be?
+
+## Run models with no scaling to assess this
+# Hair model with no scaling
+hair_results <- run_gee_model(
+  hair_gee_data,
+  outcome = "detect_tfv",
+  predictors = c("wilson_adh", "group_new")
+)
+
+flextable(hair_results)
+```
+
+

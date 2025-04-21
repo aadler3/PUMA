@@ -1,0 +1,318 @@
+---
+title: "PUMA Supplementary Analyses"
+output: html_document
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Supplementary Analyses for PUMA Study
+
+This document contains additional analyses for the PUMA study that supplement the main analyses.
+
+## Load Required Packages and Source Utilities
+
+```{r load-packages, message=FALSE, warning=FALSE}
+# Load main packages
+library(dplyr)
+library(flextable)
+library(ggplot2)
+library(collapse)
+library(labelled)
+library(compareGroups)
+library(gee)
+library(geepack)
+library(pROC)
+library(ROCR)
+library(plotROC)
+library(gridExtra)
+library(kableExtra)
+library(ggalluvial)
+
+# Source utility files
+source("data_utils.R")  # Data loading and preprocessing
+source("analysis_utils.R")  # Statistical analysis
+source("viz_utils.R")  # Visualization functions
+```
+
+## Load and Preprocess Data
+
+```{r load-data}
+# Load raw data
+puma_all <- load_puma_data()
+
+# Preprocess data
+puma_all <- preprocess_puma_data(puma_all)
+
+# Get month 12 data for cross-sectional analyses
+month12 <- get_visit_data(puma_all, 5)
+```
+
+# Supplementary Analysis 1: Adherence Transitions (Alluvial Plots)
+
+```{r alluvial-plot}
+# Prepare data for alluvial plot
+# Filter for participants who have all visits
+complete_participants <- puma_all %>%
+  group_by(ptid) %>%
+  summarize(visit_count = n_distinct(visit)) %>%
+  filter(visit_count >= 3) %>%
+  pull(ptid)
+
+# Filter the dataset
+alluvial_data <- puma_all %>%
+  filter(ptid %in% complete_participants) %>%
+  select(ptid, visit, visit_coded, group_new, wilson_cat, wilson_adh) %>%
+  arrange(ptid, visit)
+
+# Create alluvial plot for all participants
+alluvial_plot_all <- create_alluvial_plot(
+  data = alluvial_data,
+  id_var = "ptid",
+  var_name = "wilson_cat",
+  visit_var = "visit_coded",
+  fill_var = "wilson_cat",
+  title = "Adherence Category Transitions Across Visits (All Participants)"
+)
+
+# Display the plot
+alluvial_plot_all
+
+# Create separate alluvial plots for each study arm
+# POC Urine arm
+alluvial_data_poc <- alluvial_data %>% 
+  filter(group_new == "Intervention")
+
+alluvial_plot_poc <- create_alluvial_plot(
+  data = alluvial_data_poc,
+  id_var = "ptid",
+  var_name = "wilson_cat",
+  visit_var = "visit_coded",
+  fill_var = "wilson_cat",
+  title = "Adherence Category Transitions - Intervention Arm"
+)
+
+# Display the plot
+alluvial_plot_poc
+
+# Standard of Care arm
+alluvial_data_soc <- alluvial_data %>% 
+  filter(group_new == "Standard of Care")
+
+alluvial_plot_soc <- create_alluvial_plot(
+  data = alluvial_data_soc,
+  id_var = "ptid",
+  var_name = "wilson_cat",
+  visit_var = "visit_coded",
+  fill_var = "wilson_cat",
+  title = "Adherence Category Transitions - Standard of Care Arm"
+)
+
+# Display the plot
+alluvial_plot_soc
+```
+
+# Supplementary Analysis 2: Relationship Between Hair and Urine Results
+
+```{r hair-urine-relationship}
+# Create a contingency table of hair vs. urine results at month 12
+hair_urine_table <- table(month12$detect_tfv, month12$ut_result)
+colnames(hair_urine_table) <- c("Urine Negative", "Urine Positive")
+rownames(hair_urine_table) <- c("Hair Negative", "Hair Positive")
+
+# Display the table
+hair_urine_table
+
+# Calculate agreement statistics
+agreement <- sum(diag(hair_urine_table)) / sum(hair_urine_table) * 100
+
+# Chi-square test
+hair_urine_chisq <- chisq.test(hair_urine_table)
+hair_urine_chisq
+
+# Create a bar plot of agreement
+hair_urine_data <- month12 %>%
+  filter(!is.na(detect_tfv) & !is.na(ut_result)) %>%
+  mutate(
+    hair_result = factor(detect_tfv, levels = c(0, 1), labels = c("Negative", "Positive")),
+    urine_result = factor(ut_result, levels = c(0, 1), labels = c("Negative", "Positive"))
+  )
+
+agreement_plot <- create_bar_plot(
+  data = hair_urine_data,
+  x_var = "hair_result",
+  fill_var = "urine_result",
+  title = "Concordance Between Hair and Urine Results at Month 12",
+  x_label = "Hair Result",
+  y_label = "Count",
+  position = "dodge",
+  colors = c("lightblue", "darkblue")
+)
+
+# Display the plot
+agreement_plot
+```
+
+# Supplementary Analysis 3: Hair Dose Categories and Self-reported Adherence
+
+```{r hair-dose-adherence}
+# Compare Wilson adherence between hair dose categories
+hair_adh_comparison <- month12 %>%
+  filter(!is.na(hair3code)) %>%
+  group_by(hair3code) %>%
+  summarize(
+    mean_wilson = mean(wilson_adh, na.rm = TRUE),
+    sd_wilson = sd(wilson_adh, na.rm = TRUE),
+    median_wilson = median(wilson_adh, na.rm = TRUE),
+    n = n()
+  )
+
+# Display the results
+hair_adh_comparison
+
+# Run ANOVA to test for differences
+hair_anova <- aov(wilson_adh ~ hair3code, data = month12)
+summary(hair_anova)
+
+# Create boxplot of adherence by hair dose category
+boxplot_hair <- create_boxplot(
+  data = month12 %>% filter(!is.na(hair3code)),
+  y_var = "wilson_adh",
+  group_var = "hair3code",
+  title = "Self-reported Adherence by Hair Dose Category",
+  y_label = "Wilson Adherence Score",
+  colors = c("lightgreen", "green", "darkgreen")
+)
+
+# Display the plot
+boxplot_hair
+```
+
+# Supplementary Analysis 4: Behavioral Factors and Adherence
+
+```{r behavioral-factors}
+# Create a dataset with behavioral factors
+behavior_data <- month12 %>%
+  select(
+    wilson_adh, ut_result, detect_tfv, hair2_coded,
+    new_partner, HIV_pos_partner, unknown_HIV, HIV_neg_partner,
+    condomless_sex, bc_any, group_new
+  )
+
+# Run logistic regression models to identify behavioral factors associated with adherence
+# 1. Model for urine test positivity
+urine_model <- glm(
+  ut_result ~ new_partner + HIV_pos_partner + unknown_HIV + 
+              HIV_neg_partner + condomless_sex + bc_any,
+  family = binomial(link = "logit"),
+  data = behavior_data
+)
+
+# Display summary
+summary(urine_model)
+
+# 2. Model for hair positivity
+hair_model <- glm(
+  detect_tfv ~ new_partner + HIV_pos_partner + unknown_HIV + 
+              HIV_neg_partner + condomless_sex + bc_any,
+  family = binomial(link = "logit"),
+  data = behavior_data
+)
+
+# Display summary
+summary(hair_model)
+
+# 3. Linear model for Wilson adherence score
+wilson_model <- lm(
+  wilson_adh ~ new_partner + HIV_pos_partner + unknown_HIV + 
+              HIV_neg_partner + condomless_sex + bc_any,
+  data = behavior_data
+)
+
+# Display summary
+summary(wilson_model)
+
+# Create a summary table of significant associations
+behavior_summary <- data.frame(
+  Factor = c("New Partner", "HIV+ Partner", "Unknown HIV Partner", 
+             "HIV- Partner", "Condomless Sex", "Any Birth Control"),
+  Urine_OR = c(exp(coef(urine_model)[-1])),
+  Urine_p = c(summary(urine_model)$coefficients[-1, 4]),
+  Hair_OR = c(exp(coef(hair_model)[-1])),
+  Hair_p = c(summary(hair_model)$coefficients[-1, 4]),
+  Wilson_Coef = c(coef(wilson_model)[-1]),
+  Wilson_p = c(summary(wilson_model)$coefficients[-1, 4])
+)
+
+# Format the table
+behavior_summary <- behavior_summary %>%
+  mutate(
+    Urine_OR = round(Urine_OR, 2),
+    Urine_p = round(Urine_p, 3),
+    Hair_OR = round(Hair_OR, 2),
+    Hair_p = round(Hair_p, 3),
+    Wilson_Coef = round(Wilson_Coef, 2),
+    Wilson_p = round(Wilson_p, 3)
+  )
+
+# Display the table
+create_flex_table(behavior_summary, caption = "Associations Between Behavioral Factors and Adherence Measures")
+```
+
+# Supplementary Analysis 5: Impact of Group Assignment on Behavioral Factors
+
+```{r group-behavior}
+# Compare behavioral factors between study arms
+behavior_by_group <- month12 %>%
+  group_by(group_new) %>%
+  summarize(
+    new_partner_pct = mean(new_partner, na.rm = TRUE) * 100,
+    HIV_pos_partner_pct = mean(HIV_pos_partner, na.rm = TRUE) * 100,
+    unknown_HIV_pct = mean(unknown_HIV, na.rm = TRUE) * 100,
+    HIV_neg_partner_pct = mean(HIV_neg_partner, na.rm = TRUE) * 100,
+    condomless_sex_pct = mean(condomless_sex, na.rm = TRUE) * 100,
+    bc_any_pct = mean(bc_any, na.rm = TRUE) * 100
+  )
+
+# Format the table
+behavior_by_group <- behavior_by_group %>%
+  mutate(across(where(is.numeric), ~ round(., 1)))
+
+# Display the table
+create_flex_table(behavior_by_group, caption = "Behavioral Factors by Study Arm (%)")
+
+# Test for differences between arms
+group_diff_results <- data.frame(
+  Factor = character(),
+  Chi_Square = numeric(),
+  P_Value = numeric()
+)
+
+# List of behavioral variables to test
+behavior_vars <- c("new_partner", "HIV_pos_partner", "unknown_HIV", 
+                   "HIV_neg_partner", "condomless_sex", "bc_any")
+
+# Run chi-square tests for each variable
+for (var in behavior_vars) {
+  chi_test <- run_chisq_test(month12, var, "group_new")
+  
+  # Add to results dataframe
+  group_diff_results <- rbind(
+    group_diff_results,
+    data.frame(
+      Factor = var,
+      Chi_Square = round(chi_test$statistic, 2),
+      P_Value = round(chi_test$p.value, 3)
+    )
+  )
+}
+
+# Display the results
+create_flex_table(group_diff_results, caption = "Chi-Square Tests for Group Differences in Behavioral Factors")
+```
+
+# Conclusion
+
+These supplementary analyses provide additional insights into the PUMA study data, focusing on adherence transitions over time, relationships between different adherence measures, and behavioral factors associated with adherence. The findings complement the main analyses and offer a more comprehensive understanding of PrEP adherence patterns and predictors in this population. 

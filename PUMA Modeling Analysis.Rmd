@@ -1,0 +1,184 @@
+---
+title: "PUMA Modeling Analysis"
+output: html_document
+date: "2025-04-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Set up
+```{r, include=FALSE}
+#load packages
+library(dplyr)
+library(flextable)
+library(ggplot2)
+library(collapse)
+library(labelled)
+library(compareGroups)
+library(gee)
+library(geepack)
+library(pROC)
+library(ROCR)
+library(plotROC)
+library(gridExtra)
+library(kableExtra)
+library(ggalluvial)
+```
+
+# Load Data and Source Functions
+```{r}
+pathway <- "~/Library/CloudStorage/Box-Box/Puma Analysis/Analysis/Code"
+month12 <- readRDS(file.path(pathway, "/RDS/puma_month12.rds"))
+puma_all <- readRDS(file.path(pathway, "/RDS/puma_long_clean.rds"))
+
+output_path <- "~/Library/CloudStorage/Box-Box/Puma Analysis/Analysis/Code/Output"
+
+source("analysis_utilities.R")
+```
+
+# Prepare Data for GEE models
+```{r}
+# Create dataframes for the GEE models section
+## Hair
+hair_gee_data <- prepare_gee_data(
+  puma_all, 
+  outcome = "detect_tfv", 
+  predictors = c("wilson_adh_scaled_sd", "group_new"),
+  additional_vars = c("wilson_adh10", "wilson_adh", "hair3numeric", "hair2_coded",
+                      "emp_coded", "age", "edu")
+)
+
+## Urine
+ut_gee_data <- prepare_gee_data(
+  puma_all, 
+  outcome = "ut_result", 
+  predictors = c("wilson_adh_scaled_sd", "group_new"),
+  additional_vars = c("wilson_adh", "wilson_adh10", "emp_coded", "age", "edu")
+)
+
+## Continuous hair
+continuous_data <- prepare_gee_data(
+  puma_all, 
+  outcome = "tfvngml", 
+  predictors = c("wilson_adh_scaled_sd", "group_new"),
+  additional_vars = c("wilson_adh", "wilson_adh10", "ptid", "visit", "detect_tfv")
+)
+```
+
+# Hair -- Binary (0/1)
+## Adherence Scaled by Standard Deviation
+```{r}
+hair_sd_results <- run_gee_model(
+  hair_gee_data,
+  outcome = "detect_tfv",
+  predictors = c("wilson_adh_scaled_sd", "group_new")
+)
+
+flextable(hair_sd_results)
+```
+
+## Adherence Not-Scaled
+```{r}
+hair_results <- run_gee_model(
+  hair_gee_data,
+  outcome = "detect_tfv",
+  predictors = c("wilson_adh", "group_new")
+)
+
+flextable(hair_results)
+```
+
+## Adherence Scaled by Factor of 10
+```{r}
+hair_10_results <- run_gee_model(
+  hair_gee_data,
+  outcome = "detect_tfv",
+  predictors = c("wilson_adh10", "group_new")
+)
+
+flextable(hair_10_results)
+```
+
+# Hair -- Continuous
+## Adherence Scaled by Standard Deviation
+```{r}
+# Association between adherence and continuous hair levels
+# Linear regression with a GEE model 
+# Association between adherence and continuous hair levels
+hair_cont_results <- run_gee_continuous_model(
+  continuous_data,
+  outcome = "tfvngml",
+  predictors = c("wilson_adh_scaled_sd", "group_new")
+)
+
+flextable(hair_cont_results)
+
+```
+
+# Hair -- Categorical with 3 codes (< 2 doses, 2-3 doses, >= 4 doses)
+## Adherence Scaled by Standard Deviation
+```{r}
+hair_3cat_results <- run_gee_model(
+  hair_gee_data,
+  outcome = "hair3numeric",
+  predictors = c("wilson_adh_scaled_sd", "group_new")
+)
+
+flextable(hair_3cat_results)
+```
+
+# Hair -- Categorical with 2 codes (High [1; >= 4 doses] vs Low [0; <= 3 doses])
+## Adherence Scaled by Standard Deviation
+```{r}
+hair_2cat_results <- run_gee_model(
+  hair_gee_data,
+  outcome = "hair2_coded",
+  predictors = c("wilson_adh_scaled_sd", "group_new")
+)
+
+flextable(hair_2cat_results)
+```
+
+# Urine -- Binary (0/1)
+## Adherence Scaled by Standard Deviation
+```{r}
+# Urine model with scaled_sd
+ut_sd_results <- run_gee_model(
+  ut_gee_data,
+  outcome = "ut_result",
+  predictors = c("wilson_adh_scaled_sd", "group_new")
+)
+
+flextable(ut_sd_results)
+```
+
+## Adherence Not-Scaled
+```{r}
+urine_results <- run_gee_model(
+  ut_gee_data,
+  outcome = "ut_result",
+  predictors = c("wilson_adh", "group_new")
+)
+
+flextable(urine_results)
+```
+
+## Adherence Scaled by Factor of 10
+```{r}
+ut_10_results <- run_gee_model(
+  ut_gee_data,
+  outcome = "ut_result",
+  predictors = c("wilson_adh10", "group_new")
+)
+
+flextable(ut_10_results)
+```
+
+# Multivariate Analysis
+
+```{r}
+
+```
+

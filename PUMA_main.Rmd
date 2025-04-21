@@ -1,0 +1,611 @@
+---
+title: "PUMA Analysis"
+output: html_document
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+This document contains the main analysis for the PUMA study, which evaluates the impact of point-of-care urine tenofovir assays on PrEP adherence.
+
+## Load Required Packages and Source Utilities
+
+```{r load-packages, message=FALSE, warning=FALSE}
+# Load main packages
+library(dplyr)
+library(flextable)
+library(ggplot2)
+library(collapse)
+library(labelled)
+library(compareGroups)
+library(gee)
+library(geepack)
+library(pROC)
+library(ROCR)
+library(plotROC)
+library(gridExtra)
+library(kableExtra)
+library(ggalluvial)
+
+# Source utility files
+source("data_utils.R")  # Data loading and preprocessing
+source("analysis_utils.R")  # Statistical analysis
+source("viz_utils.R")  # Visualization functions
+```
+
+## Load and Preprocess Data
+
+```{r load-data}
+# Load raw data
+puma_all <- load_puma_data()
+
+# Preprocess data
+puma_all <- preprocess_puma_data(puma_all)
+
+# Get month 12 data for cross-sectional analyses
+month12 <- get_visit_data(puma_all, 5)
+
+# Create subsets by study arm
+poc_all <- puma_all %>% filter(group_new == "Intervention")
+soc_all <- puma_all %>% filter(group_new == "Standard of Care")
+```
+
+# Analysis 1: Descriptive Statistics
+
+```{r descriptive}
+# Create a table of baseline characteristics - including ALL variables to preserve everything
+table1_data <- puma_all %>% 
+  filter(visit == 1) %>%
+  select(
+    # Group variable
+    group_new,
+    
+    # Demographics
+    age, edu, marital_yn, emp_coded, income, incsource_coded,
+    
+    # Partner and sexual behavior
+    ppoz, ppoz_coded, new_partner_yn, HIV_pos_partner_yn, unknown_HIV_yn, 
+    HIV_neg_partner_yn, condomless_sex_yn, sex2, sex3, sex6, sex7, sex9, sex11,
+    
+    # Birth control and other baseline variables
+    bc_any_yn, par5_recode, 
+    
+    # Travel and access
+    travel, travel_coded,
+    
+    # Baseline adherence measures (if available)
+    wilson_adh, padh4, padh7, padh3,
+    
+    # Baseline biomarkers (if available)
+    ut_result, detect_tfv, hair2_coded, hair3code, hair4code, hair4blq, hair5blq
+  )
+
+# Create a nicer formatted variable name for the table
+var_labels <- list(
+  age = "Age (years)",
+  edu = "Education level",
+  marital = "Relationship status",
+  emp_coded = "Employment type",
+  income = "Income source (numeric)",
+  incsource_coded = "Source of income",
+  ppoz = "Partner HIV positive (numeric)",
+  ppoz_coded = "Partner HIV positive",
+  new_partner = "Had new partner",
+  HIV_pos_partner = "Had HIV+ partner",
+  unknown_HIV = "Had partner with unknown HIV status",
+  HIV_neg_partner = "Had HIV- partner",
+  condomless_sex = "Had condomless sex",
+  bc_any = "Uses any birth control",
+  travel = "Travel time (numeric)",
+  travel_coded = "Travel time to clinic",
+  wilson_adh = "Wilson adherence score"
+)
+
+# Using compareGroups for descriptive table
+# Select key variables for the table - can be adjusted based on needs
+tab1 <- createTable(compareGroups(group_new ~ age + edu + marital_yn + emp_coded + 
+                                  income + incsource_coded + ppoz_coded + travel_coded +
+                                  new_partner_yn + HIV_pos_partner_yn + unknown_HIV_yn +
+                                  HIV_neg_partner_yn + condomless_sex_yn + bc_any_yn,
+                                  data = table1_data),
+                    show.all = TRUE,
+                    show.p.overall = FALSE)
+
+tab1
+```
+
+# Analysis 2: Baseline Month 12 Statistics
+
+```{r month12-stats}
+# Replicate the original presentation statistics analysis
+cat("Month 12 Statistics:\n")
+cat("-------------------\n")
+
+# Urine test results
+cat("Urine Test Results (Month 12):\n")
+table(month12$ut_result, useNA = "ifany")
+table(month12$detect_tfv, useNA = "ifany")
+
+# Find specific participants if needed
+month12_soc <- month12 %>% filter(group_new == "Standard of Care")
+if("534201982" %in% month12_soc$ptid) {
+  specific_participant <- month12_soc %>% filter(ptid == "534201982")
+  print(specific_participant)
+}
+
+# Overall adherence
+cat("\nOverall Wilson Adherence (Month 12):\n")
+mean_adh <- mean(month12$wilson_adh, na.rm = TRUE)
+sd_adh <- sd(month12$wilson_adh, na.rm = TRUE)
+cat(sprintf("Mean: %.2f, SD: %.2f\n", mean_adh, sd_adh))
+
+# By urine test result
+cat("\nWilson Adherence by Urine Test Result (Month 12):\n")
+t_result <- t.test(wilson_adh ~ ut_result, data = month12)
+print(t_result)
+
+month12_utpos <- month12 %>% filter(ut_result == 1)
+cat("Urine Positive:\n")
+cat(sprintf("Mean: %.2f, SD: %.2f, n=%d\n", 
+            mean(month12_utpos$wilson_adh, na.rm = TRUE),
+            sd(month12_utpos$wilson_adh, na.rm = TRUE),
+            sum(!is.na(month12_utpos$wilson_adh))))
+
+month12_utneg <- month12 %>% filter(ut_result == 0)
+cat("Urine Negative:\n")
+cat(sprintf("Mean: %.2f, SD: %.2f, n=%d\n", 
+            mean(month12_utneg$wilson_adh, na.rm = TRUE),
+            sd(month12_utneg$wilson_adh, na.rm = TRUE),
+            sum(!is.na(month12_utneg$wilson_adh))))
+```
+
+# Analysis 3: BLQ (Below Limit of Quantification) Analysis
+
+```{r blq-analysis}
+# Analyze BLQ data by visit and group
+blq_results <- analyze_blq_data(puma_all, blq_var = "blq", visit_var = "visit_coded", group_var = "group_new")
+
+# Display overall BLQ table
+cat("Overall BLQ by Visit:\n")
+print(blq_results$overall_table)
+
+# Display BLQ table by group
+cat("\nBLQ by Visit for Intervention Group:\n")
+print(blq_results$group_tables$Intervention)
+
+cat("\nBLQ by Visit for Standard of Care Group:\n")
+print(blq_results$group_tables$`Standard of Care`)
+
+# Display chi-square test results for each visit
+cat("\nChi-square Tests for BLQ by Group at Each Visit:\n")
+for (visit_name in names(blq_results$chisq_results)) {
+  cat(sprintf("Visit %s: ", visit_name))
+  result <- blq_results$chisq_results[[visit_name]]
+  cat(sprintf("X-squared = %.3f, df = %d, p-value = %.3f\n", 
+              result$statistic, result$parameter, result$p.value))
+}
+
+# Additional BLQ tables from original analysis
+cat("\nBLQ by Visit and Group:\n")
+table(puma_all$visit_coded, puma_all$blq)
+table(poc_all$visit_coded, poc_all$blq)
+table(soc_all$visit_coded, soc_all$blq)
+```
+
+# Analysis 4: Urine Test Results
+
+```{r urine-analysis}
+# Create a dataset with urine test results
+ut_long <- puma_all %>% select(group_new, ut_result, visit, ptid, visit_coded)
+
+# Reshape to wide format for visit-specific analyses
+ut_wide <- reshape_wide(ut_long, "ut_result")
+
+# Replicate the original chi-square tests
+cat("Urine Test Positivity Statistics:\n")
+cat("-----------------------------\n")
+
+# Summarize positivity by visit
+for (i in 1:5) {
+  var_name <- paste0("ut_result.", i)
+  if (var_name %in% names(ut_wide)) {
+    pos_count <- sum(ut_wide[[var_name]] == 1, na.rm = TRUE)
+    total_count <- sum(!is.na(ut_wide[[var_name]]))
+    miss_count <- sum(is.na(ut_wide[[var_name]]))
+    cat(sprintf("Visit %d: %d/%d (%.1f%%) positive, %d missing\n", 
+                i, pos_count, total_count, 
+                (pos_count/total_count)*100, miss_count))
+  }
+}
+
+# Run chi-square tests for differences between groups and over time
+ut_chisq_results <- run_visit_chisq_analysis(ut_wide, "ut_result", "group_new")
+
+# Display chi-square test results
+cat("\nChi-Square Tests for Group Differences in Urine Test Results:\n")
+for (i in 1:5) {
+  result_name <- paste0("visit", i, "_by_group")
+  if (result_name %in% names(ut_chisq_results)) {
+    result <- ut_chisq_results[[result_name]]
+    cat(sprintf("Visit %d: X-squared = %.3f, df = %d, p-value = %.3f\n", 
+                i, result$statistic, result$parameter, result$p.value))
+  }
+}
+
+# Separate analyses by study arm
+urine_poc <- ut_wide %>% filter(group_new == "Intervention")
+urine_soc <- ut_wide %>% filter(group_new == "Standard of Care")
+
+# Calculate urine test positivity by visit and group for plotting
+ut_summary <- ut_long %>%
+  group_by(visit, visit_coded, group_new) %>%
+  summarize(
+    n_positive = sum(ut_result == 1, na.rm = TRUE),
+    n_total = sum(!is.na(ut_result)),
+    percent_positive = n_positive / n_total * 100,
+    label = sprintf("%.1f%%", percent_positive),
+    .groups = 'drop'
+  )
+
+# Create a line plot
+ut_plot <- create_line_plot(
+  data = ut_summary,
+  x_var = "visit",
+  y_var = "percent_positive",
+  group_var = "group_new",
+  title = "Urine Test Positivity by Visit and Study Arm",
+  y_label = "Percent Positive (%)",
+  x_label = "Visit",
+  ylim = c(0, 100)
+)
+
+# Add labels
+ut_plot_with_labels <- add_mean_labels(
+  plot = ut_plot,
+  data = ut_summary,
+  x_var = "visit",
+  y_var = "percent_positive",
+  label_var = "label"
+)
+
+# Display the plot
+ut_plot_with_labels
+
+# Run GEE model for urine test results
+ut_gee <- run_gee_model(
+  data = ut_long,
+  formula = "ut_result ~ factor(visit) * factor(group_new)"
+)
+
+# Show model summary
+summary(ut_gee)
+
+# Test interaction terms
+ut_interactions <- test_gee_interactions(ut_gee)
+ut_interactions
+```
+
+# Analysis 5: Self-reported Adherence
+
+```{r adherence}
+# Select adherence variables and reshape for longitudinal analysis
+adherence <- puma_all %>% 
+  select(group_new, wilson_adh, padh7_recode, padh4_recode, visit, ptid, visit_coded)
+
+# Reshape to wide format for visit-specific analyses
+adherence_wide <- reshape_wide(adherence, c("wilson_adh", "padh7_recode", "padh4_recode"))
+
+# Analyze Wilson adherence across visits using utility function
+wilson_results <- analyze_longitudinal_var(adherence_wide, "wilson_adh")
+
+# Display summary of results
+cat("Wilson Adherence Score Summary by Visit:\n")
+cat("------------------------------------\n")
+
+for (i in 1:5) {
+  overall_name <- paste0("visit", i, "_overall")
+  ttest_name <- paste0("visit", i, "_ttest")
+  group_name <- paste0("visit", i, "_by_group")
+  
+  if (overall_name %in% names(wilson_results)) {
+    overall <- wilson_results[[overall_name]]
+    cat(sprintf("Visit %d Overall: Mean = %.2f, SD = %.2f, n = %d\n", 
+                i, overall$mean, overall$sd, overall$n))
+    
+    if (ttest_name %in% names(wilson_results)) {
+      ttest <- wilson_results[[ttest_name]]
+      cat(sprintf("  T-test p-value: %.3f\n", ttest$p.value))
+    }
+    
+    if (group_name %in% names(wilson_results)) {
+      group_stats <- wilson_results[[group_name]]
+      for (j in 1:nrow(group_stats)) {
+        cat(sprintf("  %s: Mean = %.2f, SD = %.2f, n = %d, missing = %d\n", 
+                    group_stats[[1]][j], 
+                    group_stats$mean[j], 
+                    group_stats$sd[j], 
+                    group_stats$n[j],
+                    group_stats$missing[j]))
+      }
+    }
+    cat("\n")
+  }
+}
+
+# Create summary table for Wilson adherence by visit and group for plotting
+adherence_summary <- adherence %>%
+  group_by(visit, visit_coded, group_new) %>%
+  summarize(
+    mean_score = mean(wilson_adh, na.rm = TRUE),
+    sd_score = sd(wilson_adh, na.rm = TRUE),
+    n = sum(!is.na(wilson_adh)),
+    label = sprintf("%.1f (%.1f)", mean_score, sd_score),
+    .groups = 'drop'
+  )
+
+# Create line plot for Wilson adherence scores
+adherence_plot <- create_line_plot(
+  data = adherence_summary,
+  x_var = "visit",
+  y_var = "mean_score",
+  group_var = "group_new",
+  title = "Mean Adherence Score by Visit and Study Arm",
+  y_label = "Mean Wilson Adherence Score",
+  x_label = "Visit",
+  ylim = c(70, 95)
+)
+
+# Add labels with means and SDs
+adherence_plot_with_labels <- add_mean_labels(
+  plot = adherence_plot,
+  data = adherence_summary,
+  x_var = "visit",
+  y_var = "mean_score",
+  label_var = "label"
+)
+
+# Display the plot
+adherence_plot_with_labels
+
+# Run GEE model to test for differences between arms over time
+adherence_gee <- run_gee_model(
+  data = adherence,
+  formula = "wilson_adh ~ factor(visit) * factor(group_new)",
+  family = gaussian(link = "identity")
+)
+
+# Show model summary
+summary(adherence_gee)
+
+# Test interaction terms
+adherence_interactions <- test_gee_interactions(adherence_gee)
+adherence_interactions
+
+# Analyze individual components of adherence (padh7 and padh4)
+# Item padh7 (self-rated adherence)
+padh7_results <- analyze_longitudinal_var(adherence_wide, "padh7_recode")
+
+cat("\nSelf-rated Adherence (padh7) Summary by Visit:\n")
+cat("-------------------------------------------\n")
+
+for (i in 1:5) {
+  overall_name <- paste0("visit", i, "_overall")
+  if (overall_name %in% names(padh7_results)) {
+    overall <- padh7_results[[overall_name]]
+    cat(sprintf("Visit %d: Mean = %.2f, SD = %.2f, n = %d\n", 
+                i, overall$mean, overall$sd, overall$n))
+  }
+}
+
+# Item padh4 (missed doses)
+padh4_results <- analyze_longitudinal_var(adherence_wide, "padh4_recode")
+
+cat("\nMissed Doses Adherence (padh4) Summary by Visit:\n")
+cat("---------------------------------------------\n")
+
+for (i in 1:5) {
+  overall_name <- paste0("visit", i, "_overall")
+  if (overall_name %in% names(padh4_results)) {
+    overall <- padh4_results[[overall_name]]
+    cat(sprintf("Visit %d: Mean = %.2f, SD = %.2f, n = %d\n", 
+                i, overall$mean, overall$sd, overall$n))
+  }
+}
+```
+
+# Analysis 6: Hair Analysis
+
+```{r hair-analysis}
+# Analyze hair data using the various categorizations
+cat("Hair Analysis Results:\n")
+cat("-------------------\n")
+
+# 3-level hair categorization (hair3code)
+cat("3-level Hair Categorization (hair3code):\n")
+table(month12$hair3code, useNA = "ifany")
+
+# 4-level hair categorization (hair4code)
+cat("\n4-level Hair Categorization (hair4code):\n")
+table(month12$hair4code, useNA = "ifany")
+
+# 3-level with BLQ separated (hair4blq)
+cat("\n3-level with BLQ Separated (hair4blq):\n")
+table(month12$hair4blq, useNA = "ifany")
+
+# 4-level with BLQ separated (hair5blq)
+cat("\n4-level with BLQ Separated (hair5blq):\n")
+table(month12$hair5blq, useNA = "ifany")
+
+# Binary hair classification (hair2_coded)
+cat("\nBinary Hair Classification (hair2_coded):\n")
+table(month12$hair2code, month12$hair2_coded, useNA = "ifany")
+
+# Compare Wilson adherence by hair category
+cat("\nWilson Adherence by Hair Category (hair3code):\n")
+hair_adh_stats <- month12 %>%
+  filter(!is.na(hair3code)) %>%
+  group_by(hair3code) %>%
+  summarize(
+    mean = mean(wilson_adh, na.rm = TRUE),
+    sd = sd(wilson_adh, na.rm = TRUE),
+    median = median(wilson_adh, na.rm = TRUE),
+    n = sum(!is.na(wilson_adh))
+  )
+print(hair_adh_stats)
+
+# Statistical test
+cat("\nANOVA for Wilson Adherence by Hair Category:\n")
+hair_anova <- aov(wilson_adh ~ hair3code, data = month12)
+print(summary(hair_anova))
+
+# Create boxplot of Wilson adherence by hair category
+hair_boxplot <- create_boxplot(
+  data = month12 %>% filter(!is.na(hair3code)),
+  y_var = "wilson_adh",
+  group_var = "hair3code",
+  title = "Wilson Adherence by Hair Category",
+  y_label = "Wilson Adherence Score",
+  colors = c("lightgreen", "green", "darkgreen")
+)
+
+# Display the plot
+hair_boxplot
+
+# Compare binary hair measure with urine result
+cat("\nBinary Hair Measure vs Urine Result:\n")
+table(month12$hair2_coded, month12$ut_result, useNA = "ifany")
+chisq.test(month12$hair2_coded, month12$ut_result)
+```
+
+# Analysis 7: ROC Curve Analysis
+
+```{r roc-analysis}
+# Create ROC analyses for different markers
+roc_urine <- create_roc_analysis(
+  data = month12,
+  predictor = "wilson_adh",
+  outcome = "ut_result",
+  cutoffs = seq(0, 100, by = 10),
+  find_best_cutoff = TRUE,
+  find_sens90_cutoff = TRUE
+)
+
+roc_hair <- create_roc_analysis(
+  data = month12,
+  predictor = "wilson_adh",
+  outcome = "detect_tfv",
+  cutoffs = seq(0, 100, by = 10),
+  find_best_cutoff = TRUE
+)
+
+roc_hair2 <- create_roc_analysis(
+  data = month12,
+  predictor = "wilson_adh",
+  outcome = "hair2_coded",
+  cutoffs = seq(0, 100, by = 10),
+  find_best_cutoff = TRUE
+)
+
+# Display AUC values
+cat("AUC Values:\n")
+cat(sprintf("Urine Test (neg/pos): %.3f\n", roc_urine$auc))
+cat(sprintf("Hair (neg/pos): %.3f\n", roc_hair$auc))
+cat(sprintf("Hair (low/high): %.3f\n", roc_hair2$auc))
+
+# Display best cutoffs
+cat("\nBest Cutoffs (Youden's J):\n")
+cat(sprintf("Urine Test: %.1f\n", roc_urine$best_cutoff))
+cat(sprintf("Hair (neg/pos): %.1f\n", roc_hair$best_cutoff))
+cat(sprintf("Hair (low/high): %.1f\n", roc_hair2$best_cutoff))
+
+# Display sensitivity~90% cutoff for urine
+cat("\nCutoff for ~90% Sensitivity (Urine Test):\n")
+cat(sprintf("Urine Test: %.1f\n", roc_urine$sens90_cutoff))
+
+# Create a list of ROC analyses with names
+roc_list <- list(
+  "Urine (Neg/Pos)" = roc_urine,
+  "Hair (Neg/Pos)" = roc_hair,
+  "Hair (Low/High)" = roc_hair2
+)
+
+# Plot all ROC curves together
+plot_roc_curves(
+  roc_list = roc_list,
+  colors = c("blue", "red", "darkgreen"),
+  main = "ROC Curves for Adherence Prediction"
+)
+
+# Plot individual ROC curves as in original analysis
+# Urine ROC curve
+plot(roc_urine$roc, col = "blue", 
+     main = "ROC Curve for Urine Test Prediction", print.auc = TRUE)
+legend("bottomright", legend = paste0("AUC = ", round(roc_urine$auc, 3)), 
+       col = "blue", lwd = 2)
+
+# Hair binary ROC curve
+plot(roc_hair2$roc, col = "darkgreen", lwd = 2,
+     main = "ROC Curve for Predicting Low vs High PrEP Adherence in Hair")
+legend("bottomright",
+       legend = paste0("AUC = ", round(roc_hair2$auc, 3)),
+       col = "darkgreen",
+       lwd = 2)
+
+# Display sensitivity/specificity results for urine
+cat("\nSensitivity and Specificity for Urine Test at Different Cutoffs:\n")
+print(roc_urine$results)
+
+# Display sensitivity/specificity results for hair (neg/pos)
+cat("\nSensitivity and Specificity for Hair (Neg/Pos) at Different Cutoffs:\n")
+print(roc_hair$results)
+
+# Display sensitivity/specificity results for hair (low/high)
+cat("\nSensitivity and Specificity for Hair (Low/High) at Different Cutoffs:\n")
+print(roc_hair2$results)
+```
+
+# Analysis 8: Combined Model for Hair + Urine
+
+```{r combined-model}
+# Create a logistic regression model with both predictors
+combined_model <- glm(
+  hair2_coded ~ wilson_adh + ut_result, 
+  family = poisson(link = "log"), 
+  data = month12
+)
+
+# Show model summary
+summary(combined_model)
+
+# Create a reduced dataset for ROC analysis (exclude missing)
+combined_roc_data <- month12 %>% 
+  select(hair2_coded, hair2code, wilson_adh, ut_result) %>% 
+  filter(!is.na(hair2_coded))
+
+# Get predicted probabilities from the model
+combined_roc_data$predicted_probs <- predict(combined_model, 
+                                           type = "response", 
+                                           newdata = combined_roc_data)
+
+# Create ROC curve using these predicted probabilities
+combined_roc <- roc(combined_roc_data$hair2_coded, combined_roc_data$predicted_probs)
+
+# Display AUC for the combined model
+cat("Combined Model AUC:\n")
+print(auc(combined_roc))
+
+# Plot the combined ROC curve
+plot(combined_roc, col = "purple", 
+     main = "ROC Curve for Combined Model (Wilson Adherence + Urine Test)", 
+     lwd = 2, print.auc = TRUE)
+```
+
+# Conclusion
+
+This document has provided a comprehensive analysis of the PUMA study data, examining self-reported adherence, urine test results, and their relationship to hair biomarker levels. The findings suggest that [insert conclusions based on your analysis].
+
+Additional analyses can be found in the supplementary analysis files. 

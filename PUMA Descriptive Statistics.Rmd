@@ -1,0 +1,520 @@
+---
+title: "PUMA Descriptive Statistics"
+output: html_document
+date: "2025-04-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Set up
+```{r, include=FALSE}
+#load packages
+library(dplyr)
+library(flextable)
+library(ggplot2)
+library(collapse)
+library(labelled)
+library(compareGroups)
+library(gee)
+library(geepack)
+library(pROC)
+library(ROCR)
+library(plotROC)
+library(gridExtra)
+library(kableExtra)
+library(ggalluvial)
+
+```
+
+# Load Data
+```{r}
+# Load utility functions
+source("descriptive_utils.R")
+
+pathway <- "~/Library/CloudStorage/Box-Box/Puma Analysis/Analysis/Code"
+month12 <- readRDS(file.path(pathway, "/RDS/puma_month12.rds"))
+puma_all <- readRDS(file.path(pathway, "/RDS/puma_long_clean.rds"))
+primary_wide <- readRDS(file.path(pathway, "/RDS/puma_primary_wide.rds"))
+hair_wide <- readRDS(file.path(pathway, "/RDS/puma_hair_wide.rds"))
+ut_wide <- readRDS(file.path(pathway, "/RDS/puma_urine_wide.rds"))
+adherence_wide <- readRDS(file.path(pathway, "/RDS/puma_adherence_wide.rds"))
+ut_long <- readRDS(file.path(pathway, "/RDS/puma_urine_long.rds"))
+
+output_path <- "~/Library/CloudStorage/Box-Box/Puma Analysis/Analysis/Code/Output"
+```
+
+
+# Table 1 Re-creation
+```{r}
+# Re-code variables for ease of creating Table 1
+puma_all$group_new <- factor(puma_all$group_new, levels = c("Standard of Care", "Intervention"))
+ut_long$group_new <- factor(ut_long$group_new, levels = c("Standard of Care", "Intervention"))
+
+# create a list of binary variables to code as yes/no from 1/0
+table1_data <- baseline
+
+bin_variables <- c("marital", "sex8", "sex10", "sex12", "sex14", "par5___1", "par5___2",
+                   "par5___3", "par5___4", "par5___5", "par5___6", "par5___7", 
+                   "par5___8", "par5___9", "padh3", "padh9___1", "padh9___2", 
+                   "padh9___3", "padh9___4", "padh9___5", "padh9___6", "padh9___7",
+                   "padh9___8", "padh9___9", "padh9___10", "padh9___11", "padh9___12",
+                   "padh9___13", "padh9___14", "padh9___15", "padh9____9", "padh10",
+                   "mh14", "mh16", "mh17", "ut_result", "detect_tfv", "condomless_sex",
+                    "new_partner", "HIV_pos_partner","unknown_HIV", "HIV_neg_partner", 
+                   "bc_any")
+
+
+for (var in bin_variables){
+  table1_data[[var]] <- ifelse(table1_data[[var]] == 1, "Yes", "No")
+}
+
+table1_data <- table1_data %>% select("age", "edu", "income", "sex1", "prep_length", 
+                                      "padh3", "padh6", "emp_coded", 
+                                      "ppoz_coded", "marital", "mh14", "bc_any", 
+                                      "travel_coded","incsource_coded", "sex5", 
+                                      "sex2", "condomless_sex", "new_partner", 
+                                      "HIV_pos_partner", "unknown_HIV", 
+                                      "HIV_neg_partner", "sex14","group")
+
+table1_arms <- compareGroups(group~ ., data = table1_data,na.omit(TRUE))
+export_table1_arms <- createTable(table1_arms, show.p.overall=FALSE)
+export_table1_arms
+export2word(export_table1_arms, file = file.path(output_path, "/Tables/Table 1 by Arm.docx"))
+
+table1_all <- compareGroups(~ ., data = table1_data,na.omit(TRUE))
+export_table1_all <- createTable(table1_all, show.p.overall=FALSE)
+export_table1_all
+export2word(export_table1_all, file = file.path(output_path, "/Tables/Table 1 Total.docx"))
+```
+
+# Hair Levels ##
+```{r}
+# For hair data - modified to include counts of positives
+hair_detection_results <- summarize_across_visits(
+  data = hair_wide, 
+  var_prefix = "detect_tfv", 
+  visits = 1:5, 
+  group_var = "group", 
+  stat_func = function(x, na.rm=TRUE) sum(x, na.rm=na.rm)/sum(!is.na(x))
+)
+
+# Add counts of positive results for hair
+hair_positive_counts <- summarize_across_visits(
+  data = hair_wide, 
+  var_prefix = "detect_tfv", 
+  visits = 1:5, 
+  group_var = "group", 
+  stat_func = function(x, na.rm=TRUE) sum(x, na.rm=na.rm)
+)
+
+# Also get missing counts
+missing_hair <- summarize_across_visits(
+  data = hair_wide, 
+  var_prefix = "detect_tfv", 
+  visits = 1:5,
+  stat_func = function(x, na.rm=TRUE) sum(is.na(x))
+)
+
+# Create subsets by study arm
+hair_poc <- hair_wide %>% filter(group == "Intervention")
+hair_soc <- hair_wide %>% filter(group == "Standard of Care")
+
+# Run chi-squared tests for all visits using a loop
+chi_results_hair <- data.frame(
+  Visit = 1:5,
+  ChiSq = numeric(5),
+  P_value = numeric(5),
+  Overall_p = numeric(5)
+)
+
+for (i in 1:5) {
+  var_name <- paste0("detect_tfv.", i)
+  
+  # Between-group test
+  test_result <- run_chi_square(hair_wide, "group", var_name)
+  chi_results_hair$ChiSq[i] <- test_result$statistic
+  chi_results_hair$P_value[i] <- test_result$p.value
+  
+  # Overall test
+  overall_test <- run_chi_square(hair_wide, var_name)
+  chi_results_hair$Overall_p[i] <- overall_test$p.value
+}
+
+print(chi_results_hair)
+
+# Categorical analysis over study period
+# Analyze all categorical hair variables
+hair_categorical_results <- analyze_categorical_across_visits(
+  data = puma_all,
+  var_names = c("hair3code", "hair4blq", "hair2code"),
+  visits = 1:5,
+  group_var = "group_new"
+)
+
+# Continuous Hair Variable (non-modified)
+# Loop through visits 1-5 to calculate mean and sd of tfvngml
+for (i in 1:5) {
+  cat("\n----- Visit", i, "-----\n")
+  
+  # Calculate overall mean and sd for this visit
+  cont_data <- puma_all %>% filter(blq != 1)
+  overall_mean <- mean(cont_data$tfvngml[cont_data$visit == i], na.rm = TRUE)
+  overall_sd <- sd(cont_data$tfvngml[cont_data$visit == i], na.rm = TRUE)
+  
+  cat("\nOverall:\n")
+  cat("Mean:", round(overall_mean, 4), "\n")
+  cat("SD:", round(overall_sd, 4), "\n")
+  
+  # Get all unique values of group_new for this visit
+  groups <- unique(cont_data$group_new[cont_data$visit == i])
+  
+  # Loop through each group
+  for (g in groups) {
+    cat("\nStudy Arm:", g, "\n")
+    
+    # Calculate mean and sd for this visit and group
+    group_mean <- mean(cont_data$tfvngml[cont_data$visit == i & 
+                                       cont_data$group_new == g], 
+                      na.rm = TRUE)
+    
+    group_sd <- sd(cont_data$tfvngml[cont_data$visit == i & 
+                                   cont_data$group_new == g], 
+                  na.rm = TRUE)
+    
+    cat("Mean:", round(group_mean, 4), "\n")
+    cat("SD:", round(group_sd, 4), "\n")
+  }
+  
+  cat("\n-----------------------\n")
+}
+
+# BLQ Analysis
+table(puma_all$visit_coded, puma_all$blq)
+
+# By group
+poc_all <- puma_all %>% filter(group_new == "Intervention")
+soc_all <- puma_all %>% filter(group_new == "Standard of Care")
+table(poc_all$visit_coded, poc_all$blq)
+table(soc_all$visit_coded, soc_all$blq)
+```
+
+# Urine Analysis ####
+```{r}
+# For urine data - modified to include counts of positives
+urine_detection_results <- summarize_across_visits(
+  data = ut_wide, 
+  var_prefix = "ut_result", 
+  visits = 1:5, 
+  group_var = "group_new", 
+  stat_func = function(x, na.rm=TRUE) sum(x, na.rm=na.rm)/sum(!is.na(x))
+)
+
+# Add counts of positive results for urine
+urine_positive_counts <- summarize_across_visits(
+  data = ut_wide, 
+  var_prefix = "ut_result", 
+  visits = 1:5, 
+  group_var = "group_new", 
+  stat_func = function(x, na.rm=TRUE) sum(x, na.rm=na.rm)
+)
+
+# Also get missing counts
+missing_urine <- summarize_across_visits(
+  data = ut_wide, 
+  var_prefix = "ut_result", 
+  visits = 1:5,
+  stat_func = function(x, na.rm=TRUE) sum(is.na(x))
+)
+
+# Create subsets by study arm
+urine_poc <- ut_wide %>% filter(group_new == "Intervention")
+urine_soc <- ut_wide %>% filter(group_new == "Standard of Care")
+
+# Run chi-squared tests for all visits using a loop
+chi_results_urine <- data.frame(
+  Visit = 1:5,
+  ChiSq = numeric(5),
+  P_value = numeric(5),
+  Overall_p = numeric(5)
+)
+
+for (i in 1:5) {
+  var_name <- paste0("ut_result.", i)
+  
+  # Between-group test
+  test_result <- run_chi_square(ut_wide, "group_new", var_name)
+  chi_results_urine$ChiSq[i] <- test_result$statistic
+  chi_results_urine$P_value[i] <- test_result$p.value
+  
+  # Overall test
+  overall_test <- run_chi_square(ut_wide, var_name)
+  chi_results_urine$Overall_p[i] <- overall_test$p.value
+}
+
+print(chi_results_urine)
+
+# Check visit 1 without missing values
+urine_12_nomiss <- ut_wide %>% filter(!is.na(ut_result.1))
+visit1_chi <- run_chi_square(urine_12_nomiss, "ut_result.1", "group_new")
+print(visit1_chi)
+
+no_hair <- month12 %>% filter(is.na(detect_tfv)) %>% select(ptid, detect_tfv, ut_result, group)
+
+
+# GEE models for urine data
+gee_model <- geeglm(ut_result ~ factor(visit) * factor(group_new),
+                   family = binomial(link = "logit"),
+                   id = ptid,  # assuming 'id' is your subject identifier
+                   corstr = "independence",
+                   data = ut_long)
+
+# Test interaction terms and store p-values
+for (k in 2:5) {
+  # Create the term to test
+  interaction_term <- paste0("factor(visit)", k, ":factor(group_new)Intervention")
+  
+  # Get linearHypothesis test results for this term
+  test_result <- car::linearHypothesis(gee_model, interaction_term)
+  
+  # Extract and format p-value, then store it
+  p_value <- sprintf("%.3f", test_result[["Pr(>Chisq)"]][2])
+  
+  # Save p-value to corresponding visits
+  ut_long$pv[ut_long$visit == k] <- p_value
+}
+
+```
+
+# Self-reported Adherence
+```{r}
+# Use compare_across_visits to run t-tests across all visits
+wilson_t_tests <- compare_across_visits(
+  data = adherence_wide,
+  var_prefix = "wilson_adh",
+  visits = 1:5,
+  group_var = "group_new",
+  test_func = t.test
+)
+
+# Get summary statistics for wilson_adh across all visits
+# Get summary statistics for wilson_adh across all visits
+wilson_summary <- data.frame(Visit = 1:5)
+
+# Add columns for each group
+for (visit in 1:5) {
+  var_name <- paste0("wilson_adh.", visit)
+  
+  # Overall stats
+  valid_data <- adherence_wide[[var_name]][!is.na(adherence_wide[[var_name]])]
+  wilson_summary$Overall_N[visit] <- length(valid_data)
+  wilson_summary$Overall_Mean[visit] <- mean(valid_data)
+  wilson_summary$Overall_SD[visit] <- sd(valid_data)
+  
+  # By group
+  for (group in unique(adherence_wide$group_new)) {
+    group_data <- adherence_wide[[var_name]][adherence_wide$group_new == group & !is.na(adherence_wide[[var_name]])]
+    wilson_summary[[paste0(group, "_N")]][visit] <- length(group_data)
+    wilson_summary[[paste0(group, "_Mean")]][visit] <- mean(group_data)
+    wilson_summary[[paste0(group, "_SD")]][visit] <- sd(group_data)
+  }
+}
+
+print(wilson_summary)
+
+# Create subsets for POC and SOC
+adherence_poc <- adherence_wide %>% filter(group_new == "Intervention")
+adherence_soc <- adherence_wide %>% filter(group_new == "Standard of Care")
+
+# Run analysis for padh7_recode
+# List of variables to process
+variables <- c("padh7_recode.1", "padh7_recode.2", "padh7_recode.3", 
+               "padh7_recode.4", "padh7_recode.5")
+
+# List of datasets to process
+datasets <- list(adherence_wide, adherence_poc, adherence_soc)
+dataset_names <- c("adherence_wide", "adherence_poc", "adherence_soc")
+
+# Create empty results data frame
+padh7_results <- data.frame(
+  Dataset = character(),
+  Variable = character(),
+  NonNA_Count = numeric(),
+  NA_Count = numeric(),
+  Mean = numeric(),
+  SD = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Use nested loops to populate results
+for (d in 1:length(datasets)) {
+  dataset <- datasets[[d]]
+  dataset_name <- dataset_names[d]
+  
+  for (var in variables) {
+    # Create a data frame with the summary
+    summary_stats <- summarize_by_group(dataset, var, na.rm = TRUE)
+    
+    # Add results to dataframe
+    padh7_results <- rbind(padh7_results, data.frame(
+      Dataset = dataset_name,
+      Variable = var,
+      NonNA_Count = summary_stats$N,
+      NA_Count = summary_stats$Missing,
+      Mean = summary_stats$Mean,
+      SD = summary_stats$SD
+    ))
+  }
+}
+
+# Print results
+print(padh7_results)
+
+# Run t-tests for padh7_recode
+padh7_t_tests <- compare_across_visits(
+  data = adherence_wide,
+  var_prefix = "padh7_recode",
+  visits = 1:5,
+  group_var = "group_new",
+  test_func = t.test
+)
+
+# Run analysis for padh4_recode
+variables_padh4 <- c("padh4_recode.1", "padh4_recode.2", "padh4_recode.3", 
+               "padh4_recode.4", "padh4_recode.5")
+
+# Create empty results data frame for padh4
+results_padh4 <- data.frame(
+  Dataset = character(),
+  Variable = character(),
+  NonNA_Count = numeric(),
+  NA_Count = numeric(),
+  Mean = numeric(),
+  SD = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Use nested loops to populate results for padh4
+for (d in 1:length(datasets)) {
+  dataset <- datasets[[d]]
+  dataset_name <- dataset_names[d]
+  
+  for (var in variables_padh4) {
+    # Create a data frame with the summary
+    summary_stats <- summarize_by_group(dataset, var, na.rm = TRUE)
+    
+    # Add results to dataframe
+    results_padh4 <- rbind(results_padh4, data.frame(
+      Dataset = dataset_name,
+      Variable = var,
+      NonNA_Count = summary_stats$N,
+      NA_Count = summary_stats$Missing,
+      Mean = (summary_stats$Mean)*100,
+      SD = (summary_stats$SD)*100
+    ))
+  }
+}
+
+# Print results for padh4
+print(results_padh4)
+
+# Run t-tests for padh4_recode
+padh4_t_tests <- compare_across_visits(
+  data = adherence_wide,
+  var_prefix = "padh4_recode",
+  visits = 1:5,
+  group_var = "group_new",
+  test_func = t.test
+)
+```
+
+# Retention over Study Period
+```{r}
+# Use summarize_across_visits to get retention for each visit
+retention_overall <- summarize_across_visits(
+  data = primary_wide,
+  var_prefix = "ut_result",
+  visits = 1:5,
+  group_var = "group_new",
+  stat_func = function(x, na.rm=TRUE) sum(!is.na(x))
+)
+
+# Calculate percentages
+total_n <- nrow(primary_wide)
+intervention_n <- sum(primary_wide$group_new == "Intervention")
+soc_n <- sum(primary_wide$group_new == "Standard of Care")
+
+retention_pct <- data.frame(
+  Visit = 1:5,
+  Overall_Pct = retention_overall$Overall_N / total_n * 100,
+  Intervention_Pct = retention_overall$`Intervention_N` / intervention_n * 100,
+  `Standard of Care_Pct` = retention_overall$`Standard of Care_N` / soc_n * 100
+)
+
+print(retention_pct)
+
+# Retention for hair and urine available together
+retention_both <- data.frame(
+  Visit = 1:5,
+  Overall_N = numeric(5),
+  Intervention_N = numeric(5),
+  SOC_N = numeric(5)
+)
+
+for (i in 1:5) {
+  # Variable names
+  ut_var <- paste0("ut_result.", i)
+  hair_var <- paste0("detect_tfv.", i)
+  
+  # Subset data for this visit
+  visit_data <- primary_wide %>% 
+    filter(!is.na(get(ut_var)) & !is.na(get(hair_var)))
+  
+  # Store counts
+  retention_both$Overall_N[i] <- nrow(visit_data)
+  retention_both$Intervention_N[i] <- sum(visit_data$group_new == "Intervention")
+  retention_both$SOC_N[i] <- sum(visit_data$group_new == "Standard of Care")
+}
+
+print(retention_both)
+
+# Cumulative retention (participants present at each visit AND all previous visits)
+retention_cumulative <- data.frame(
+  Visit = 1:5,
+  Overall_N = numeric(5),
+  Intervention_N = numeric(5),
+  SOC_N = numeric(5)
+)
+
+# Start with all participants at visit 1
+current_ids <- primary_wide %>% 
+  filter(!is.na(ut_result.1) & !is.na(detect_tfv.1)) %>%
+  pull(ptid)
+
+retention_cumulative$Overall_N[1] <- length(current_ids)
+retention_cumulative$Intervention_N[1] <- sum(primary_wide$group_new[primary_wide$ptid %in% current_ids] == "Intervention")
+retention_cumulative$SOC_N[1] <- sum(primary_wide$group_new[primary_wide$ptid %in% current_ids] == "Standard of Care")
+
+# For visits 2-5, check if participants were also in all previous visits
+for (i in 2:5) {
+  ut_var <- paste0("ut_result.", i)
+  hair_var <- paste0("detect_tfv.", i)
+  
+  # Find participants with data at this visit
+  visit_ids <- primary_wide %>% 
+    filter(!is.na(get(ut_var)) & !is.na(get(hair_var))) %>%
+    pull(ptid)
+  
+  # Keep only participants who were in all previous visits
+  current_ids <- intersect(current_ids, visit_ids)
+  
+  # Store counts
+  retention_cumulative$Overall_N[i] <- length(current_ids)
+  retention_cumulative$Intervention_N[i] <- sum(primary_wide$group_new[primary_wide$ptid %in% current_ids] == "Intervention")
+  retention_cumulative$SOC_N[i] <- sum(primary_wide$group_new[primary_wide$ptid %in% current_ids] == "Standard of Care")
+}
+
+print(retention_cumulative)
+```
+

@@ -1,59 +1,83 @@
-# PUMA Analysis
+# PUMA Study Analysis
 
-This repository contains code for analyzing data from the PUMA (Point-of-care Urine Monitoring of Adherence) study.
+This repository contains code for analyzing data from the PUMA (Point-of-care Urine Monitoring of Adherence) study, which evaluates the impact of point-of-care urine tenofovir assays on PrEP adherence.
 
 ## Project Structure
 
-The project has been organized into modular R files for better maintainability and readability:
+The analysis code is organized into the following files:
 
-1. **Puma Analyses.Rmd**: The main analysis file that imports functions from the supporting files and presents the results.
+### Utility Files
 
-2. **utils.R**: Utility functions including package loading, data path management, and common helper functions.
+- `data_utils.R`: Functions for data loading and preprocessing
+- `analysis_utils.R`: Functions for statistical analyses
+- `viz_utils.R`: Functions for creating visualizations
 
-3. **data_processing.R**: Functions for data processing, variable creation, and dataset preparation.
+### Analysis Files
 
-4. **models.R**: Statistical modeling functions for GEE models, ROC analysis, and model selection.
+- `PUMA_main.Rmd`: Main analysis document containing ALL original analyses
+- `PUMA_supplementary.Rmd`: Additional complementary analyses
+- `Puma Analyses FULL.Rmd`: The original R markdown file (kept for reference)
 
-5. **visualizations.R**: Functions for creating plots and visualizations.
+### Output Directory
 
-6. **tables.R**: Functions for generating descriptive tables and summaries.
+- `figures/`: Directory for saving generated figures
 
-## Getting Started
+## How to Use
 
-To run the analysis:
+1. Make sure all required packages are installed (see package loading sections in R markdown files)
+2. Run the analyses in the following order:
+   - First, run the main analysis: `PUMA_main.Rmd`
+   - Then, run supplementary analyses: `PUMA_supplementary.Rmd`
 
-1. Open `Puma Analyses.Rmd` in RStudio
-2. Make sure all required packages are installed
-3. Ensure the data file is in the correct location
-4. Knit the document to produce the analysis report
+## Complete Analysis Components
 
-## Required Packages
+The main analysis file includes all original analyses:
 
-The analysis requires the following R packages:
-- dplyr
-- flextable
-- ggplot2
-- collapse
-- labelled
-- compareGroups
-- gee
-- geepack
-- pROC
-- ROCR
-- plotROC
-- gridExtra
+1. **Descriptive Statistics**: Comprehensive baseline comparisons between study arms
+2. **Month 12 Statistics**: Direct statistics from the final study visit
+3. **BLQ Analysis**: Below Limit of Quantification analyses for all biomarkers
+4. **Urine Test Results**: Complete analysis of urine test results across all visits
+5. **Self-reported Adherence**: Analysis of all adherence measures
+6. **Hair Analysis**: Complete analysis of all hair categorizations
+7. **ROC Curve Analysis**: Receiver Operating Characteristic analyses for all biomarkers
+8. **Combined Model**: Analysis combining multiple adherence measures
 
-These are automatically loaded when sourcing `utils.R`.
+## Modifying the Analyses
 
-## Data
+The code is organized to make it easy to modify existing analyses while preserving ALL original variables and analyses:
 
-The analysis expects a data file named `PUMAextract_13Mar2025.csv` in the data directory.
+- Functions in the utility files can be modified to adjust calculations
+- The main file preserves all original analyses but in a more organized structure
+- All variables from the original file are preserved and analyzed
 
-## Analysis Overview
+## Adding New Analyses
 
-The analysis includes:
-- Data processing and variable creation
-- Descriptive statistics
-- Statistical modeling with GEE
-- ROC curve analysis
-- Visualizations of adherence patterns 
+To add a new analysis:
+
+1. Add new analysis sections to the main or supplementary Rmd files
+2. Use the utility functions to keep code concise and maintainable
+3. Any additional utility functions can be added to the appropriate utility files
+
+## Dataset
+
+The analysis uses the following dataset:
+
+- `PUMAextract_13Mar2025.csv`: Contains participant data including demographic information, adherence measures, and biomarker results
+
+## Note on Completeness
+
+Great care has been taken to ensure that NO variables or analyses from the original file are excluded. All analyses, including detailed explorations of specific variables and special cases (like individual participant analysis), have been preserved in the reorganized structure.
+
+## Outputs
+
+The analyses produce the following outputs:
+
+- Tables of descriptive statistics
+- Visualizations of adherence patterns over time
+- Statistical test results comparing study arms
+- ROC curve analyses for different adherence measures
+- Model results for factors associated with adherence
+
+## Contact
+
+For questions about the analysis code, please contact the study team. 

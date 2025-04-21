@@ -1,0 +1,334 @@
+---
+title: "PUMA Data Cleaning"
+output: html_document
+date: "2025-04-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Set up
+```{r, include=FALSE}
+#load packages
+library(dplyr)
+library(flextable)
+library(ggplot2)
+library(collapse)
+library(labelled)
+library(compareGroups)
+library(gee)
+library(geepack)
+library(pROC)
+library(ROCR)
+library(plotROC)
+library(gridExtra)
+library(kableExtra)
+library(ggalluvial)
+```
+
+# Load Data
+```{r}
+pathway <- "~/Library/CloudStorage/Box-Box/Puma Analysis/Analysis/"
+puma_all <- read.csv(file.path(pathway, "PUMAextract_13Mar2025.csv"))
+```
+
+# New Variable Creation/Cleaning
+```{r}
+# Create any BC variable
+puma_all$bc_any <- ifelse(puma_all$par5_recode == 0, 0, ifelse(puma_all$par5_recode == 99, NA, 1))
+
+puma_all <- puma_all %>% mutate(new_partner = ifelse(sex6 >=1, 1, 0),
+                                HIV_pos_partner = ifelse(sex7 >=1, 1, 0),
+                                unknown_HIV = ifelse(sex9 >= 1, 1, 0),
+                                HIV_neg_partner = ifelse(sex11 >=1, 1, 0)
+                                )
+
+puma_all <- puma_all %>% mutate(condomless_sex = ifelse(sex2 == sex3, 0, 1))
+puma_all <- puma_all %>% relocate(condomless_sex, .after = sex3)
+
+
+# re-code variables
+puma_all <- puma_all %>% mutate(emp_coded = case_when(emp == 1 ~ "Laborer/semi-skilled",
+                                                      emp == 2 ~ "Trade/sales",
+                                                      emp == 3 ~ "Student",
+                                                      emp == 4 ~ "Professional",
+                                                      emp == 5 ~ "Farming/animal raising",
+                                                      emp == 6 ~ "Housewife",
+                                                      emp == 99 ~ "Multiple/Other"),
+                                incsource_coded = case_when(incsource == 1 ~ "My work",
+                                                            incsource == 2 ~ "My husband's work",
+                                                            incsource == 3 ~ "My family",
+                                                            incsource == 9 ~ "Other"),
+                                ppoz_coded = case_when(ppoz == 0 ~ "No",
+                                                       ppoz == 1 ~ "Yes",
+                                                       ppoz == 2 ~ "Don't know"),
+                                travel_coded = case_when(travel == 1 ~ "Less than 30 minutes",
+                                                         travel == 2 ~ "30-59 minutes",
+                                                         travel == 3 ~ "1-2 hours",
+                                                         travel == 4 ~ "More than 2 hours"))
+
+
+table(puma_all$group, useNA = "ifany")
+#checking class of arm variable
+class(puma_all$group)
+
+#name values for group 1=POC Urine Assay, 2=SOC
+#val_labels extracts variable labels from labelled vectors 
+val_labels(puma_all$group) <- c("Intervention" = 1, "Standard of Care" = 2)
+val_labels(puma_all$group)
+#use label for final table
+puma_all$group <- to_character(puma_all$group)
+
+puma_all$group_new <- case_when(puma_all$group == "Standard of Care" ~ 1,
+                                puma_all$group == "Intervention" ~ 2)
+
+puma_all <- puma_all %>% relocate(group_new, .after = group)
+
+#val_labels extracts variable labels from labelled vectors 
+val_labels(puma_all$group_new) <- c("Intervention" = 2, "Standard of Care" = 1)
+val_labels(puma_all$group_new)
+#use label for final table
+puma_all$group_new <- to_character(puma_all$group_new)
+
+puma_all$group_new <- factor(puma_all$group_new, levels = c("Standard of Care", "Intervention"))
+puma_all$group_new <- as.factor(puma_all$group_new)
+
+## Coding Variables for Wilson Adherence Score
+val_labels(puma_all$padh7) <- c("Very poor" = 0, "Poor" = 1, "Fair" = 2, "Good" = 3, "Very good" = 4, "Excellent" = 5)
+val_labels(puma_all$padh7)
+puma_all$padh7 <- to_character(puma_all$padh7)
+
+puma_all <- puma_all %>% mutate(padh7_recode = case_when(padh7 == "Very poor" ~ 0,
+                                                         padh7 == "Poor" ~.2,
+                                                         padh7 == "Fair" ~ .4,
+                                                         padh7 == "Good" ~ .6,
+                                                         padh7 == "Very good" ~ .8,
+                                                         padh7 == "Excellent" ~ 1))
+puma_all <- puma_all %>% relocate(padh7_recode, .after = padh7)
+
+puma_all <- puma_all %>% mutate(padh4 = ifelse(padh3 == 1, 0, padh4))
+
+puma_all <- puma_all %>% mutate(padh4_recode = (30-padh4)/30)
+puma_all <- puma_all %>% relocate(padh4_recode, .after = padh4)
+
+puma_all <- puma_all %>% mutate(avg_padh = ((padh4_recode + padh7_recode)/2)*100)
+puma_all <- puma_all %>% relocate(avg_padh, .after = wilson_adh)
+
+## Scaling Wilson Adherence Score
+puma_all <- puma_all %>% mutate(wilson_adh_scaled_sd = wilson_adh/sd(wilson_adh, 
+                                                                    na.rm = TRUE))
+
+puma_all <- puma_all %>% relocate(wilson_adh_scaled_sd, .after = wilson_adh)
+
+
+## Coded version of visits for visualizations
+puma_all$visit_coded <- factor(puma_all$visit, levels = c(1, 2, 3, 4, 5),
+                         labels = c("Baseline", "Month3", "Month6",
+                                    "Month9", "Month12"))
+
+puma_all$ptid  <- as.character(puma_all$ptid)
+
+### Recode Hair Data with STRAND doses 
+# 3 levels 
+# duplicate hair3code
+puma_all$hair3numeric <- puma_all$hair3code
+
+table(puma_all$hair3code)
+puma_all$hair3code <- factor(puma_all$hair3code, levels = c(1, 2, 3),
+                             labels = c("<2", "2 to 3", ">=4"))
+table(puma_all$hair3code)
+
+# 4 levels
+table(puma_all$hair4code, useNA = "ifany")
+puma_all$hair4code <- factor(puma_all$hair4code, levels = c(1, 2, 3, 4),
+                             labels = c("<2", "2 to 3", "4-6", "Daily"))
+table(puma_all$hair4code, useNA = "ifany")
+
+# 3 with BLQ separated out
+table(puma_all$hair4blq, useNA = "ifany")
+puma_all$hair4blq <- factor(puma_all$hair4blq, levels = c(0, 1, 2, 3),
+                            labels = c("BLQ", "<2", "2 to 3", ">=4"))
+table(puma_all$hair4blq, useNA = "ifany")
+
+# 4 with BLQ separated out
+table(puma_all$hair5blq, useNA = "ifany")
+puma_all$hair5blq <- factor(puma_all$hair5blq, levels = c(0, 1, 2, 3, 4),
+                            labels = c("BLQ", "<2", "2 to 3", "4-6", "Daily"))
+table(puma_all$hair5blq, useNA = "ifany")
+
+## Low vs High Hair Variable
+puma_all <- puma_all %>% mutate(hair2code = case_when(hair3code == "<2" ~ "<=3",
+                                                      hair3code == "2 to 3" ~ "<=3",
+                                                      hair3code == ">=4" ~">=4"),
+                                hair2_coded = ifelse(hair2code == ">=4", 1, 0)) %>%
+  relocate(c(hair2code, hair2_coded), .after = hair3code)
+
+## Create a categorical Wilson Adherence Score for Alluvial Plots
+puma_all <- puma_all %>% mutate(wilson_cat = case_when(wilson_adh >= 0 & wilson_adh <= 20 ~ "0-20",
+                                                       wilson_adh >= 21 & wilson_adh <= 40 ~ "21-40",
+                                                       wilson_adh >= 41 & wilson_adh <= 60 ~ "41-60",
+                                                       wilson_adh >= 61 & wilson_adh <= 80 ~ "61-80",
+                                                       wilson_adh >= 81 & wilson_adh <= 100 ~ "81-100"))
+puma_all <- puma_all %>% relocate(wilson_cat, .after = wilson_adh)
+
+```
+
+## Write out new CSVs for cleaned data
+```{r}
+#csv
+write.csv(puma_all, file.path(pathway, "/Code/CSVs/PUMA_Long_Clean.csv"))
+
+#RDS
+saveRDS(puma_all, file = file.path(pathway, "/Code/RDS/puma_long_clean.rds"))
+```
+
+# Subset Dataframes -- create and export 
+```{r}
+## Smaller month 12 dataframe 
+month12 <- puma_all %>% filter(visit == 5)
+
+#csv
+write.csv(month12, file.path(pathway, "/Code/CSVs/PUMA_month12.csv"))
+
+#RDS
+saveRDS(month12, file = file.path(pathway, "/Code/RDS/puma_month12.rds"))
+
+# Limit to baseline data 
+baseline <- puma_all %>% filter(visit == 1)
+
+#csv
+write.csv(baseline, file.path(pathway, "/Code/CSVs/PUMA_baseline.csv"))
+
+#RDS
+saveRDS(baseline, file = file.path(pathway, "/Code/RDS/puma_baseline.rds"))
+```
+
+## POC and SOC split
+```{r}
+# POC
+poc_all <- puma_all %>% filter(group == "Intervention")
+
+# EXPORT
+##csv
+write.csv(poc_all, file.path(pathway, "/Code/CSVs/PUMA_poc_all.csv"))
+
+##RDS
+saveRDS(poc_all, file = file.path(pathway, "/Code/RDS/puma_poc_all.rds"))
+
+# SOC
+soc_all <- puma_all %>% filter(group == "Standard of Care")
+
+# EXPORT
+##csv
+write.csv(soc_all, file.path(pathway, "/Code/CSVs/PUMA_soc_all.csv"))
+
+##RDS
+saveRDS(soc_all, file = file.path(pathway, "/Code/RDS/puma_soc_all.rds"))
+```
+
+## Urine and Hair Splits
+```{r}
+# Urine
+ut_long <- puma_all %>% select(group_new, ut_result, visit, ptid)
+
+ut_long <- as.data.frame(ut_long)
+
+# EXPORT
+##csv
+write.csv(ut_long, file.path(pathway, "/Code/CSVs/PUMA_urine_long.csv"))
+
+##RDS
+saveRDS(ut_long, file = file.path(pathway, "/Code/RDS/puma_urine_long.rds"))
+
+ut_wide <- reshape(ut_long, v.names = "ut_result", idvar = c("ptid", "group_new"), 
+                   timevar = "visit", direction = "wide")
+
+# EXPORT
+##csv
+write.csv(ut_wide, file.path(pathway, "/Code/CSVs/PUMA_urine_wide.csv"))
+
+##RDS
+saveRDS(ut_wide, file = file.path(pathway, "/Code/RDS/puma_urine_wide.rds"))
+
+# Hair
+hair_long <- puma_all %>% select(group, detect_tfv, visit, ptid)
+
+hair_long <- as.data.frame(hair_long)
+
+hair_wide <- reshape(hair_long, v.names = "detect_tfv", idvar = c("ptid", "group"), 
+                   timevar = "visit", direction = "wide")
+
+# EXPORT
+##csv
+write.csv(hair_wide, file.path(pathway, "/Code/CSVs/PUMA_hair_wide.csv"))
+
+##RDS
+saveRDS(hair_wide, file = file.path(pathway, "/Code/RDS/puma_hair_wide.rds"))
+```
+
+## Adherence Data Frame
+```{r}
+adherence <- puma_all %>% select(group_new, wilson_adh, padh7_recode, padh4_recode, visit, ptid)
+adherence_wide <- reshape(adherence, v.names = c("wilson_adh", "padh7_recode", "padh4_recode"), idvar = "ptid",timevar = "visit", direction = "wide")
+
+# EXPORT
+##csv
+write.csv(adherence_wide, file.path(pathway, "/Code/CSVs/PUMA_adherence_wide.csv"))
+
+##RDS
+saveRDS(adherence_wide, file = file.path(pathway, "/Code/RDS/puma_adherence_wide.rds"))
+```
+
+# Primary Wide Dataset
+```{r}
+## Turn primary dataset into wide dataset
+puma_all <- as.data.frame(puma_all) #must be just data.frame for next step to work
+
+primary_long <- puma_all %>% select(ptid, group_new, visit, detect_tfv, ut_result,
+                                    wilson_adh, wilson_adh_scaled_sd)
+
+primary_wide <- reshape(primary_long, idvar = c("ptid", "group_new"), timevar = "visit", direction = "wide")
+
+# EXPORT
+##csv
+write.csv(primary_wide, file.path(pathway, "/Code/CSVs/PUMA_primary_wide.csv"))
+
+##RDS
+saveRDS(primary_wide, file = file.path(pathway, "/Code/RDS/puma_primary_wide.rds"))
+```
+
+# Secondary Wide Dataset
+```{r}
+# Turn secondary dataset into wide dataset
+puma_all <- as.data.frame(puma_all) #must be just data.frame for next step to work
+
+secondary_long <- puma_all %>% select(ptid, group_new, visit, detect_tfv, ut_result,
+                                    wilson_adh, wilson_adh_scaled_sd, padh4, padh7,
+                                    ppoz_coded, marital, income, travel_coded, 
+                                    incsource_coded, edu, emp_coded,mh14, sex1, 
+                                    prep_length,condomless_sex, sex14, age)
+
+secondary_wide <- reshape(secondary_long, idvar = c("ptid", "group_new"), timevar = "visit", direction = "wide")
+
+# Remove variables not needed at all timeframes
+secondary_wide <- secondary_wide %>% select(- c(prep_length.2, prep_length.3, prep_length.4, prep_length.5,
+                                      marital.2, marital.3, marital.4, marital.5, sex1.2,
+                                      sex1.3, sex1.4, sex1.5, age.2, age.3, age.4, age.5, edu.2, edu.3, edu.4,
+                                      edu.5, ppoz_coded.2, ppoz_coded.3, ppoz_coded.4, ppoz_coded.5, 
+                                      incsource_coded.2, incsource_coded.3, incsource_coded.4, incsource_coded.5,
+                                      sex1.2, sex1.3, sex1.4, sex1.5, prep_length.2, prep_length.3, prep_length.4, 
+                                      prep_length.5))
+
+# EXPORT
+##csv
+write.csv(secondary_wide, file.path(pathway, "/Code/CSVs/PUMA_secondary_wide.csv"))
+
+##RDS
+saveRDS(secondary_wide, file = file.path(pathway, "/Code/RDS/puma_secondary_wide.rds"))
+```
+
+```{r}
+
+```
+
