@@ -1,0 +1,279 @@
+---
+title: "PUMA ROC Curves"
+output: html_document
+date: "2025-04-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Set up
+```{r, include=FALSE}
+#load packages
+library(dplyr)
+library(flextable)
+library(ggplot2)
+library(collapse)
+library(labelled)
+library(compareGroups)
+library(gee)
+library(geepack)
+library(pROC)
+library(ROCR)
+library(plotROC)
+library(gridExtra)
+library(kableExtra)
+library(ggalluvial)
+```
+
+# Load Data and Source Functions
+```{r}
+pathway <- "~/Library/CloudStorage/Box-Box/Puma Analysis/Analysis/Code"
+month12 <- readRDS(file.path(pathway, "/RDS/puma_month12.rds"))
+puma_all <- readRDS(file.path(pathway, "/RDS/puma_long_clean.rds"))
+secondary_long <- readRDS(file.path(pathway, "/RDS/puma_secondary_long.rds"))
+
+output_path <- "~/Library/CloudStorage/Box-Box/Puma Analysis/Analysis/Code/Output"
+
+```
+
+### Urine
+```{r}
+# Create ROC object
+roc_urine <- roc(month12$ut_result, month12$wilson_adh)
+roc_hair <- roc(month12$detect_tfv, month12$wilson_adh)
+roc_hair2 <- roc(month12$hair2_coded, month12$wilson_adh)
+
+# Get coordinates for different cutoffs
+coords_urine <- coords(roc_urine, "all", ret = c("threshold", "sensitivity", "specificity"))
+
+# Calculate AUC values
+auc_urine <- auc(roc_urine)
+auc_hair <- auc(roc_hair)
+auc_hair2 <- auc(roc_hair2)
+
+# Format AUC values with 3 decimal places
+auc_urine_formatted <- round(auc_urine, 3)
+auc_hair_formatted <- round(auc_hair, 3)
+auc_hair2_formatted <- round(auc_hair2, 3)
+
+# Create enhanced legend text that includes AUC values
+urine_legend <- paste0("Urine (Neg/Pos) (AUC = ", auc_urine_formatted, ")")
+hair_legend <- paste0("Hair (Neg/Pos) (AUC = ", auc_hair_formatted, ")")
+hair2_legend <- paste0("Hair (Neg + Low/High) (AUC = ", auc_hair2_formatted, ")")
+
+# Plot ROC curves with AUC values in the legend
+plot(roc_urine, col = "blue", 
+     main = "ROC Curves for Adherence Prediction", 
+     lwd = 2)
+plot(roc_hair, col = "red", add = TRUE, lwd = 2)
+plot(roc_hair2, col = "darkgreen", add = TRUE, lwd = 2)
+# Add enhanced legend with AUC values
+legend("bottomright", 
+       legend = c(urine_legend, hair_legend, hair2_legend), 
+       col = c("blue", "red", "darkgreen"), 
+       lwd = 2)
+
+
+plot(roc_hair2, col = "darkgreen", lwd = 2,
+     main = "ROC Curve for Adherence Predicition of Low vs High PrEP Adherence")
+legend("bottomright",
+       legend = hair2_legend,
+       col = "darkgreen",
+       lwd = 2)
+
+# Plot ROC curves
+plot(roc_urine, col = "blue", main = "ROC Curves for Adherence Prediction", print.auc = TRUE)
+plot(roc_hair, col = "red", add = TRUE, print.auc = TRUE)
+legend("bottomright", legend = c("Urine Analysis", "Hair Analysis"), 
+       col = c("blue", "red"), lwd = 2)
+
+# Youden's J statistic (maximizes sensitivity + specificity - 1)
+best_cutoff_urine <- coords(roc_urine, "best", ret = "threshold")
+
+# Find cutoff that gives sensitivity closest to 90%
+coords_df <- as.data.frame(coords(roc_urine, "all"))
+closest_to_90 <- coords_df[which.min(abs(coords_df$sensitivity - 0.9)),]
+cutoff_90sens_urine <- closest_to_90$threshold
+
+# Create a sequence of cutoffs
+cutoffs_urine <- seq(0, 100, by = 10)
+
+# Pre-allocate vectors instead of a dataframe
+sensitivity_values <- numeric(length(cutoffs_urine))
+specificity_values <- numeric(length(cutoffs_urine))
+
+# Calculate sensitivity and specificity for each cutoff
+for(i in 1:length(cutoffs_urine)) {
+  cutoff <- cutoffs_urine[i]
+  # Get coordinates for this specific threshold
+  coords_at_cutoff <- coords(roc_urine, cutoffs_urine[i], input = "threshold")
+  
+  # Store values
+  sensitivity_values[i] <- coords_at_cutoff$sensitivity
+  specificity_values[i] <- coords_at_cutoff$specificity
+}
+
+# Create final dataframe
+results_urine <- data.frame(
+  wilson_adherence_cutoff = round(cutoffs_urine, 3),
+  sensitivity = round(sensitivity_values, 3),
+  specificity = round(specificity_values, 3)
+)
+
+
+```
+
+### Hair (Neg/Pos)
+```{r}
+# Get coordinates for different cutoffs
+coords_hair <- coords(roc_hair, "all", ret = c("threshold", "sensitivity", "specificity"))
+
+# Youden's J statistic (maximizes sensitivity + specificity - 1)
+best_cutoff_hair <- coords(roc_hair, "best", ret = "threshold")
+
+# Create a sequence of cutoffs
+cutoffs_hair <- seq(0, 100, by = 10)
+
+# Pre-allocate vectors instead of a dataframe
+sensitivity_values_hair <- numeric(length(cutoffs_hair))
+specificity_values_hair <- numeric(length(cutoffs_hair))
+
+# Calculate sensitivity and specificity for each cutoff
+for(i in 1:length(cutoffs_hair)) {
+  cutoff <- cutoffs_hair[i]
+  # Get coordinates for this specific threshold
+  coords_at_cutoff <- coords(roc_hair, cutoffs_hair[i], input = "threshold")
+  
+  # Store values
+  sensitivity_values_hair[i] <- coords_at_cutoff$sensitivity
+  specificity_values_hair[i] <- coords_at_cutoff$specificity
+}
+
+# Create final dataframe
+results_hair <- data.frame(
+  wilson_adherence_cutoff = round(cutoffs_hair, 3),
+  sensitivity = round(sensitivity_values_hair, 3),
+  specificity = round(specificity_values_hair, 3)
+)
+
+results_hair
+```
+
+### Hair (Low/High)
+```{r}
+# Get coordinates for different cutoffs
+coords_hair2 <- coords(roc_hair2, "all", ret = c("threshold", "sensitivity", "specificity"))
+
+# Youden's J statistic (maximizes sensitivity + specificity - 1)
+best_cutoff_hair2 <- coords(roc_hair2, "best", ret = "threshold")
+
+# Pre-allocate vectors instead of a dataframe
+sensitivity_values_hair2 <- numeric(length(cutoffs_hair))
+specificity_values_hair2 <- numeric(length(cutoffs_hair))
+
+# Calculate sensitivity and specificity for each cutoff
+for(i in 1:length(cutoffs_hair)) {
+  cutoff <- cutoffs_hair[i]
+  # Get coordinates for this specific threshold
+  coords_at_cutoff <- coords(roc_hair2, cutoffs_hair[i], input = "threshold")
+  
+  # Store values
+  sensitivity_values_hair2[i] <- coords_at_cutoff$sensitivity
+  specificity_values_hair2[i] <- coords_at_cutoff$specificity
+}
+
+# Create final dataframe
+results_hair2 <- data.frame(
+  wilson_adherence_cutoff = round(cutoffs_hair, 3),
+  sensitivity = round(sensitivity_values_hair2, 3),
+  specificity = round(specificity_values_hair2, 3)
+)
+
+results_hair2
+```
+
+### Combined ROC -- Hair + Urine
+```{r}
+# Create a logistic regression model with both predictors
+combined_model <- glm(hair2_coded ~ wilson_adh + ut_result, 
+                     family = poisson(link = "log"), 
+                     data = month12)
+
+# Get predicted probabilities from the model
+# Smaller dataframe
+combined_roc_data <- month12 %>% select(hair2_coded, hair2code, wilson_adh) %>% filter(!is.na(hair2_coded))
+combined_roc_data$predicted_probs <- predict(combined_model, type = "response")
+
+# Create ROC curve using these predicted probabilities
+combined_roc <- roc(combined_roc_data$hair2_coded, combined_roc_data$predicted_probs)
+
+# Plot the ROC curve
+plot(combined_roc, main = "ROC Curve for Combined Predictors",
+     col = "blue", lwd = 2)
+
+# Calculate and display AUC
+auc_combined <- auc(combined_roc)
+legend("bottomright", 
+       legend = paste0("AUC = ", round(auc_combined, 3)),
+       col = "blue", lwd = 2)
+
+# Youden's J statistic (maximizes sensitivity + specificity - 1)
+best_cutoff_combined <- coords(combined_roc, "best", ret = "threshold")
+
+cutoffs <- seq(0, 1, by = 0.1)  # Cutoffs from 0 to 1 in increments of 0.1
+
+# Pre-allocate vectors instead of a dataframe
+sensitivity_values_combined <- numeric(length(cutoffs))
+specificity_values_combined <- numeric(length(cutoffs))
+
+# Calculate sensitivity and specificity for each cutoff
+for(i in 1:length(cutoffs)) {
+  cutoff <- cutoffs[i]
+  # Get coordinates for this specific threshold
+  coords_at_cutoff <- coords(combined_roc, cutoffs[i], input = "threshold")
+  
+  # Store values
+  sensitivity_values_combined[i] <- coords_at_cutoff$sensitivity
+  specificity_values_combined[i] <- coords_at_cutoff$specificity
+}
+
+# Create final dataframe
+results_combined <- data.frame(
+  cutoff = round(cutoffs, 3),
+  sensitivity = round(sensitivity_values_combined, 3),
+  specificity = round(specificity_values_combined, 3)
+)
+
+results_combined
+```
+
+```{r}
+# Get all coordinates
+coords_all <- coords(combined_roc, "all", ret = c("threshold", "sensitivity", "specificity"))
+
+# Convert to a dataframe
+coords_df <- as.data.frame(coords_all)
+
+# Calculate Youden's Index
+coords_df$youden_index <- coords_df$sensitivity + coords_df$specificity - 1
+
+# Round values
+coords_df <- coords_df %>%
+  mutate(
+    threshold = round(threshold, 3),
+    sensitivity = round(sensitivity, 3),
+    specificity = round(specificity, 3),
+    youden_index = round(youden_index, 3)
+  )
+
+# Display in a table
+kable(coords_df[seq(1, nrow(coords_df), length.out = 20), ], 
+      caption = "Sensitivity and Specificity at Selected Probability Thresholds")
+```
+
+```{r}
+
+```
+

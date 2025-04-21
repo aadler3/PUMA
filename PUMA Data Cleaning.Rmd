@@ -326,7 +326,15 @@ write.csv(secondary_wide, file.path(pathway, "/Code/CSVs/PUMA_secondary_wide.csv
 
 ##RDS
 saveRDS(secondary_wide, file = file.path(pathway, "/Code/RDS/puma_secondary_wide.rds"))
+
+# EXPORT
+##csv
+write.csv(secondary_long, file.path(pathway, "/Code/CSVs/PUMA_secondary_long.csv"))
+
+##RDS
+saveRDS(secondary_long, file = file.path(pathway, "/Code/RDS/puma_secondary_long.rds"))
 ```
+
 
 ```{r}
 

@@ -1,0 +1,304 @@
+---
+title: "PUMA Visualizations"
+output: html_document
+date: "2025-04-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Set up
+```{r, include=FALSE}
+#load packages
+library(dplyr)
+library(flextable)
+library(ggplot2)
+library(collapse)
+library(labelled)
+library(compareGroups)
+library(gee)
+library(geepack)
+library(pROC)
+library(ROCR)
+library(plotROC)
+library(gridExtra)
+library(kableExtra)
+library(ggalluvial)
+```
+
+# Load Data and Source Functions
+```{r}
+pathway <- "~/Library/CloudStorage/Box-Box/Puma Analysis/Analysis/Code"
+month12 <- readRDS(file.path(pathway, "/RDS/puma_month12.rds"))
+puma_all <- readRDS(file.path(pathway, "/RDS/puma_long_clean.rds"))
+secondary_long <- readRDS(file.path(pathway, "/RDS/puma_secondary_long.rds"))
+
+output_path <- "~/Library/CloudStorage/Box-Box/Puma Analysis/Analysis/Code/Output"
+
+```
+
+# Adherence Line Graphs
+```{r}
+# Wilson score line graph
+line_graph_df <- puma_all %>% dplyr::select(ptid, group_new, wilson_adh, visit)
+
+means_line_graph <- line_graph_df %>% group_by(visit, group_new) %>% 
+  summarise(mean_score = mean(wilson_adh, na.rm = TRUE),
+            sd_score = sd(wilson_adh, na.rm = TRUE)) %>%
+              ungroup()
+
+means_line_graph_t <- line_graph_df %>% group_by(visit) %>% 
+  summarise(mean_score = mean(wilson_adh, na.rm = TRUE),
+            sd_score = sd(wilson_adh, na.rm = TRUE)) %>%
+              ungroup()
+
+## Total sample
+# Create labels with mean and sd
+means_line_graph_t$label <- sprintf("%.1f\n(SD: %.1f)", means_line_graph_t$mean_score, means_line_graph_t$sd_score)
+
+# Add a small offset to position labels slightly above the points
+means_line_graph_t$label_y <- means_line_graph_t$mean_score + 2
+
+ggplot(means_line_graph_t, aes(x = visit, y = mean_score)) +
+  geom_line(size = 1) +
+  geom_point(size = 3) +
+  geom_text(
+    aes(y = label_y, label = label),
+    size = 3,
+    vjust = "bottom"
+  ) +
+  scale_x_continuous(breaks = 1:5) +
+  labs(
+    title = "Mean Adherence Score by Visit",
+    x = "Visit",
+    y = "Mean Wilson Adherence Score"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    legend.title = element_blank()
+  ) +
+  coord_cartesian(ylim = c(70, 95))  
+
+# Create labels with mean and sd
+means_line_graph$label <- sprintf("%.1f\n(SD: %.1f)", means_line_graph$mean_score, means_line_graph$sd_score)
+
+# Add a small offset to position labels slightly above the points
+means_line_graph$label_y <- ifelse(means_line_graph$group_new == "Intervention",
+                                   means_line_graph$mean_score + .5,
+                                   ifelse((means_line_graph$visit == 1 | means_line_graph$visit == 2 | means_line_graph$visit == 3) & 
+                                            (means_line_graph$group_new == "Standard of Care"), 
+                                          means_line_graph$mean_score - 2, means_line_graph$mean_score + .5))
+
+# Create the line plot
+ggplot(means_line_graph, aes(x = visit, y = mean_score, color = group_new, group = group_new)) +
+  geom_line(size = 1) +
+  geom_point(size = 3) +
+  geom_text(
+    aes(y = label_y, label = label),
+    size = 3,
+    vjust = "bottom"
+  ) +
+  scale_x_continuous(breaks = 1:5) +
+  scale_color_manual(values = c("Intervention" = "darkorchid4", "Standard of Care" = "skyblue4")) +
+  labs(
+    title = "Mean Adherence Score by Visit and Study Arm",
+    x = "Visit",
+    y = "Mean Wilson Adherence Score",
+    color = "Study Arm"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    legend.title = element_blank()
+  ) +
+  coord_cartesian(ylim = c(70, 95)) 
+```
+
+# Alluvial Plot
+```{r}
+alluvial_data <- puma_all %>% dplyr::select(ptid, group_new, wilson_cat, ut_result, visit_coded) %>%
+  filter(!is.na(ut_result))
+
+alluvial_plot <- ggplot(alluvial_data, 
+       aes(x = visit_coded, stratum = wilson_cat, alluvium = ptid, fill = wilson_cat, label = wilson_cat)) +
+  scale_fill_manual(values = c("hotpink4", "dodgerblue4", "chartreuse4", "purple4", "lightblue4")) +
+       geom_flow(stat = "alluvium", lode.guidance = "rightleft",color = "darkgrey") +
+       geom_stratum() +
+      facet_wrap(~ ut_result) +  # Stratify by arm
+       ylab("Frequency") +
+  xlab("Visit") +
+       ggtitle("Wilson Adherence over Study Period by Urine Results") +
+      labs(fill = "Wilson Adherence") +
+       theme_light()
+
+alluvial_plot
+```
+
+# Stratified Analysis Graphs
+```{r}
+# Visualization at Month 12
+#new data
+month12 <- month12 %>% mutate(hair_uncoded = case_when(detect_tfv == 0 ~ "Negative",
+                                                       detect_tfv == 1 ~ "Positive"),
+                              ut_uncoded = case_when(ut_result == 0 ~ "Negative",
+                                                     ut_result == 1 ~ "Positive"))
+
+month12$hair_uncoded <- factor(month12$hair_uncoded, levels = c("Negative", "Positive"))
+
+hair_viz <- month12 %>% filter(!is.na(detect_tfv))
+ut_viz <- month12 %>% filter(!is.na(ut_result))
+
+## Hair
+# Approach 1: Using facets for study groups
+hair_hist <- ggplot(hair_viz, aes(x = wilson_adh, fill = factor(hair_uncoded))) +
+  geom_histogram(position = "identity", alpha = 0.6, bins = 10) +
+  scale_fill_manual(values = c("#3498db", "#e74c3c"), 
+                    name = "PrEP Adherence (Hair)") +
+  facet_wrap(~group, ncol = 1) +
+  labs(title = "Distribution of Wilson Adherence Scores at Month 12",
+       subtitle = "By PrEP adherence (hair) and study arm",
+       x = "Wilson Adherence Score",
+       y = "Count") +
+  theme_minimal()
+
+hair_hist
+
+# Approach 2: Using density plots with different linetypes for study groups
+hair_density <- ggplot(hair_viz, aes(x = wilson_adh, fill = factor(hair_uncoded), 
+                linetype = factor(group))) +
+  geom_density(aes(color = factor(hair_uncoded)), alpha = 0.3) +
+  scale_fill_manual(values = c("#3498db", "#e74c3c"), 
+                   name = "PrEP Adherence (Hair)") +
+  scale_color_manual(values = c("#3498db", "#e74c3c"), 
+                    name = "PrEP Adherence (Hair)") +
+  scale_linetype_manual(values = c("solid", "dashed"),
+                       name = "Study Group") +
+   scale_y_continuous(expand = c(0, 0)) +  # This removes padding at the bottom
+  coord_cartesian(ylim = c(0, 0.06)) +
+  labs(title = "Distribution of Wilson Adherence Scores at Month 12",
+       subtitle = "By PrEP adherence (hair) and study arm",
+       x = "Wilson Adherence Score",
+       y = "Density") +
+  theme_minimal()
+
+hair_density
+
+## Urine
+# Approach 1: Using facets for study groups
+ut_hist <- ggplot(ut_viz, aes(x = wilson_adh, fill = factor(ut_uncoded))) +
+  geom_histogram(position = "identity", alpha = 0.6, bins = 10) +
+  scale_fill_manual(values = c("#3498db", "#e74c3c"), 
+                    name = "Urine Assay Result") +
+  facet_wrap(~group, ncol = 1) +
+  labs(title = "Distribution of Wilson Adherence Scores at Month 12",
+       subtitle = "By urine assay result and study arm",
+       x = "Wilson Adherence Score",
+       y = "Count") +
+  theme_minimal()
+
+ut_hist
+
+# Approach 2: Using density plots with different linetypes for study groups
+ut_density <- ggplot(ut_viz, aes(x = wilson_adh, fill = factor(ut_uncoded), 
+                linetype = factor(group))) +
+  geom_density(aes(color = factor(ut_uncoded)), alpha = 0.3) +
+  scale_fill_manual(values = c("#3498db", "#e74c3c"), 
+                   name = "Urine Assay Result") +
+  scale_color_manual(values = c("#3498db", "#e74c3c"), 
+                    name = "Urine Assay Result") +
+  scale_linetype_manual(values = c("solid", "dashed"),
+                       name = "Study Group") +
+  labs(title = "Distribution of Wilson Adherence Scores at Month 12",
+       subtitle = "By urine assay result and study arm",
+       x = "Wilson Adherence Score",
+       y = "Density") +
+  theme_minimal()
+
+ut_density
+```
+
+
+# Stratified Hair Level Categories by Study Arm Visualization
+```{r}
+# Visualization at Month 12
+aggregated_data <- month12 %>% filter(!is.na(hair3code)) %>%
+  group_by(hair3code) %>%
+  summarise(
+    mean_adh = mean(wilson_adh, na.rm = TRUE),
+    sd_adh = sd(wilson_adh, na.rm = TRUE)
+  )
+
+month12_plot <- ggplot(aggregated_data, aes(x = hair3code, y = mean_adh)) +
+  geom_bar(stat = "identity", fill = "slategray2") +
+  labs(
+    title = "Month 12",
+    x = "PrEP Doses per Week as Estimated by Hair TFV Levels",
+    y = "Mean Wilson Adherence Score"
+  ) +
+  theme_minimal() +
+  # Add mean values with SD in parentheses as text in the center of the bars
+  geom_text(aes(label = sprintf("%.2f (%.2f)", mean_adh, sd_adh)), 
+            vjust = -0.5,     
+            color = "black") + 
+  scale_y_continuous(expand = expansion(mult = c(0, 0.2)))
+
+month12_plot
+
+month1_data <- puma_all %>% filter(visit == 1)
+month1_aggregate <- month1_data %>% filter(!is.na(hair3code)) %>%
+  group_by(hair3code) %>%
+  summarise(
+    mean_adh = mean(wilson_adh, na.rm = TRUE),
+    sd_adh = sd(wilson_adh, na.rm = TRUE)
+  )
+
+month1_plot <- ggplot(month1_aggregate, aes(x = hair3code, y = mean_adh)) +
+  geom_bar(stat = "identity", fill = "slategray2") +
+  labs(
+    title = "Baseline",
+    x = "PrEP Doses per Week as Estimated by Hair TFV Levels",
+    y = "Mean Wilson Adherence Score"
+  ) +
+  theme_minimal() +
+  # Add mean values with SD in parentheses as text in the center of the bars
+  geom_text(aes(label = sprintf("%.2f (%.2f)", mean_adh, sd_adh)), 
+            vjust = -0.5,     
+            color = "black") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.2)))
+
+month1_plot
+
+month6_data <- puma_all %>% filter(visit == 3)
+month6_aggregate <- month6_data %>% filter(!is.na(hair3code)) %>%
+  group_by(hair3code) %>%
+  summarise(
+    mean_adh = mean(wilson_adh, na.rm = TRUE),
+    sd_adh = sd(wilson_adh, na.rm = TRUE)
+  )
+
+month6_plot <- ggplot(month6_aggregate, aes(x = hair3code, y = mean_adh)) +
+  geom_bar(stat = "identity", fill = "slategray2") +
+  labs(
+    title = "Month 6",
+    x = "PrEP Doses per Week as Estimated by Hair TFV Levels",
+    y = "Mean Wilson Adherence Score"
+  ) +
+  theme_minimal() +
+  # Add mean values with SD in parentheses as text in the center of the bars
+  geom_text(aes(label = sprintf("%.2f (%.2f)", mean_adh, sd_adh)), 
+            vjust = -0.5,     
+            color = "black") + 
+  scale_y_continuous(expand = expansion(mult = c(0, 0.2)))
+
+month6_plot
+
+grid.arrange(month1_plot, month6_plot, month12_plot, ncol = 2)
+```
+
+```{r}
+
+```
+
+

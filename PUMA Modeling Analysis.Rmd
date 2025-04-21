@@ -32,6 +32,7 @@ library(ggalluvial)
 pathway <- "~/Library/CloudStorage/Box-Box/Puma Analysis/Analysis/Code"
 month12 <- readRDS(file.path(pathway, "/RDS/puma_month12.rds"))
 puma_all <- readRDS(file.path(pathway, "/RDS/puma_long_clean.rds"))
+secondary_long <- readRDS(file.path(pathway, "/RDS/puma_secondary_long.rds"))
 
 output_path <- "~/Library/CloudStorage/Box-Box/Puma Analysis/Analysis/Code/Output"
 
@@ -50,6 +51,7 @@ hair_gee_data <- prepare_gee_data(
                       "emp_coded", "age", "edu")
 )
 
+
 ## Urine
 ut_gee_data <- prepare_gee_data(
   puma_all, 
@@ -65,6 +67,27 @@ continuous_data <- prepare_gee_data(
   predictors = c("wilson_adh_scaled_sd", "group_new"),
   additional_vars = c("wilson_adh", "wilson_adh10", "ptid", "visit", "detect_tfv")
 )
+
+## POC all
+poc_all <- prepare_gee_data(
+  puma_all, 
+  outcome = "ut_result", 
+  predictors = c("wilson_adh_scaled_sd", "group_new"),
+  additional_vars = c("wilson_adh", "wilson_adh10", "ptid", "visit", "detect_tfv")
+)
+
+poc_all <- poc_all %>% filter(group_new == "Intervention")
+
+## SOC all
+soc_all <- prepare_gee_data(
+  puma_all, 
+  outcome = "ut_result", 
+  predictors = c("wilson_adh_scaled_sd", "group_new"),
+  additional_vars = c("wilson_adh", "wilson_adh10", "ptid", "visit", "detect_tfv")
+)
+
+soc_all <- soc_all %>% filter(group_new == "Standard of Care")
+
 ```
 
 # Hair -- Binary (0/1)
@@ -177,6 +200,311 @@ flextable(ut_10_results)
 ```
 
 # Multivariate Analysis
+## Univariable Analysis 
+```{r}
+# List of predictor variables selected a priori
+predictors <- c("wilson_adh", "wilson_adh_scaled_sd", "padh4", "padh7",
+                "ppoz_coded", "marital", "income", "travel_coded", 
+                "incsource_coded", "edu", "emp_coded", "mh14", "sex1", 
+                "prep_length", "condomless_sex", "sex14", "age")
+
+# List of outcome variables
+outcomes <- c("ut_result", "detect_tfv")
+
+# Run univariable analysis
+univariable_results <- run_univariable_analysis(
+  data = secondary_long,
+  predictors = predictors,
+  outcomes = outcomes
+)
+
+# Get summary of significant predictors
+significant_predictors <- summarize_univariable_results(univariable_results)
+
+# Display the full results table
+print(univariable_results)
+## Associated univariable with ut:
+### emp_coded, age
+
+## Associated univariable with detect_tfv
+### edu 
+```
+
+## Univariable Models with Signficiant Associated Variables
+### Urine
+```{r}
+## emp_coded
+emp_results <- run_gee_model(
+  secondary_long,
+  outcome = "ut_result",
+  predictors = c("emp_coded")
+)
+
+flextable(emp_results)
+
+## age
+age_results <- run_gee_model(
+  secondary_long,
+  outcome = "ut_result",
+  predictors = c("age")
+)
+
+flextable(age_results)
+```
+
+### Hair
+```{r}
+## edu
+edu_results <- run_gee_model(
+  secondary_long,
+  outcome = "detect_tfv",
+  predictors = c("edu")
+)
+
+flextable(edu_results)
+```
+
+## Forward Selection with Significant Variables
+### Urine
+```{r}
+forward_selection_vars <- c("edu", "emp_coded", "age", "detect_tfv", "ut_result", 
+                            "group_new", "wilson_adh_scaled_sd", "ptid")
+
+multivar_data <- secondary_long[forward_selection_vars]
+
+### Urine Assay
+# Remove NAs
+multivar_data <-multivar_data[complete.cases(multivar_data),]
+ut_multivar <- multivar_data %>% select(-detect_tfv)
+
+## Manual stepwise
+
+# Start with minimum model
+min_model_multivar <- geeglm(ut_result ~ group_new,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = ut_multivar)
+QIC(min_model_multivar)
+
+# Add in Wilson ADH
+wilson_model_multivar <- geeglm(ut_result ~ group_new + wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = ut_multivar)
+QIC(wilson_model_multivar)
+
+# Add in employment status 
+emp_model_multivar <- geeglm(ut_result ~ group_new + wilson_adh_scaled_sd + emp_coded,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = ut_multivar)
+# QIC is higher thn just Wilson ADH
+QIC(emp_model_multivar)
+
+# Remove emp and add in age
+age_model_multivar <- geeglm(ut_result ~ group_new + wilson_adh_scaled_sd + age,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = ut_multivar)
+# Compare QICs
+QIC(wilson_model_multivar)
+# Age is lower 
+QIC(age_model_multivar)
+
+# Add all in
+full_model_multivar <- geeglm(ut_result ~ group_new + emp_coded + age + wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = ut_multivar)
+# Adding in emp has higher QIC
+QIC(full_model_multivar)
+
+## Print full model with age
+full_m_ut <- run_gee_model(
+  secondary_long,
+  outcome = "ut_result",
+  predictors = c("group_new", "wilson_adh_scaled_sd", "age")
+)
+
+flextable(full_m_ut)
+```
+
+### Hair Forward Selection
+```{r}
+### Urine Assay
+# Remove NAs
+multivar_data <-multivar_data[complete.cases(multivar_data),]
+hr_multivar <- multivar_data %>% select(-ut_result)
+
+## Manual stepwise
+
+# Start with minimum model
+min_model_hr <- geeglm(detect_tfv ~ group_new,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hr_multivar)
+QIC(min_model_hr)
+
+# Add in Wilson ADH
+wilson_model_hr <- geeglm(detect_tfv ~ group_new + wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hr_multivar)
+QIC(wilson_model_hr)
+
+# Add in edu
+edu_model_hr <- geeglm(detect_tfv ~ group_new + wilson_adh_scaled_sd + edu,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hr_multivar)
+# QIC is lower than just Wilson ADH
+QIC(edu_model_hr)
+
+# Just edu by itself
+edu_model2_hr <- geeglm(detect_tfv ~ group_new + edu,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hr_multivar)
+# QIC is higher than above
+QIC(edu_model2_hr)
+
+## Print full model with education status
+full_m_hr <- run_gee_model(
+  secondary_long,
+  outcome = "detect_tfv",
+  predictors = c("group_new", "wilson_adh_scaled_sd", "edu")
+)
+
+flextable(full_m_hr)
+```
+
+## Full Models for Both Results
+```{r}
+#Urine
+model_ut <- run_gee_model(
+  secondary_long,
+  outcome = "ut_result",
+  predictors = c("group_new", "wilson_adh_scaled_sd", "edu", "age")
+)
+
+flextable(model_ut)
+
+## Check QIC using geeglm
+m_ut_glm <- geeglm(ut_result ~ group_new + edu + age + wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = secondary_long)
+QIC(m_ut_glm)
+
+#Hair
+m_hair <- run_gee_model(
+  secondary_long,
+  outcome = "detect_tfv",
+  predictors = c("group_new", "wilson_adh_scaled_sd", "edu", "age")
+)
+
+flextable(m_hair)
+
+## Check QIC using geeglm
+mhair_glm <- geeglm(detect_tfv ~ group_new + edu + age + wilson_adh_scaled_sd,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hr_multivar)
+QIC(mhair_glm)
+```
+
+# Stratified Analysis
+## Hair
+```{r}
+# Filter data for analysis (identical to original)
+hair_gee_data <- puma_all %>%
+  filter(complete.cases(detect_tfv, wilson_adh, group_new, ptid)) %>% 
+  select(detect_tfv, wilson_adh_scaled_sd, wilson_adh10, 
+         group_new, ptid, wilson_adh, mh14, hair3numeric)
+
+# Analyze intervention group
+hair_poc_results <- run_group_specific_gee(
+  data = hair_gee_data,
+  outcome = "detect_tfv",
+  predictor = "wilson_adh_scaled_sd",
+  group_var = "group_new",
+  group_value = "Intervention"
+)
+
+# Display results
+flextable(hair_poc_results)
+
+# Analyze standard of care group
+hair_soc_results <- run_group_specific_gee(
+  data = hair_gee_data,
+  outcome = "detect_tfv",
+  predictor = "wilson_adh_scaled_sd",
+  group_var = "group_new",
+  group_value = "Standard of Care"
+)
+
+# Display results
+flextable(hair_soc_results)
+```
+
+## Urine 
+```{r}
+# Filter data for urine analysis (identical to original)
+ut_gee_data <- puma_all %>%
+  filter(complete.cases(ut_result, wilson_adh, group_new, ptid)) %>% 
+  select(ut_result, wilson_adh_scaled_sd, wilson_adh10, 
+         group_new, ptid, wilson_adh, mh14)
+
+# Analyze standard of care group
+ut_soc_results <- run_group_specific_gee(
+  data = ut_gee_data,
+  outcome = "ut_result",
+  predictor = "wilson_adh_scaled_sd",
+  group_var = "group_new",
+  group_value = "Standard of Care"
+)
+
+# Display results
+flextable(ut_soc_results)
+
+# Analyze intervention group
+ut_poc_results <- run_group_specific_gee(
+  data = ut_gee_data,
+  outcome = "ut_result",
+  predictor = "wilson_adh_scaled_sd",
+  group_var = "group_new",
+  group_value = "Intervention"
+)
+
+# Display results
+flextable(ut_poc_results)
+```
+
+## Interaction Tests for Difference between 
+```{r}
+# Run interaction test for urine
+ut_lrt_results <- run_group_interaction_test(
+  data = ut_gee_data,
+  outcome = "ut_result",
+  predictor = "wilson_adh_scaled_sd",
+  group_var = "group_new"
+)
+
+# Display results
+flextable(ut_lrt_results)
+
+```
 
 ```{r}
 
