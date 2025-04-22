@@ -52,18 +52,37 @@ plot_multiple_roc <- function(roc_list, labels, colors, main = "ROC Curves", lwd
 #' 
 #' @param roc_obj ROC curve object
 #' @param cutoffs Vector of cutoff values to evaluate
+#' @param prevalence The prevalence of the outcome in the population
 #' @return A dataframe with cutoffs, sensitivity, and specificity
-calculate_cutoff_metrics <- function(roc_obj, cutoffs) {
+
+calculate_cutoff_metrics <- function(roc_obj, cutoffs, prevalence = NULL) {
   sensitivity_values <- numeric(length(cutoffs))
   specificity_values <- numeric(length(cutoffs))
+  ppv_values <- numeric(length(cutoffs))
+  npv_values <- numeric(length(cutoffs))
   
   for(i in 1:length(cutoffs)) {
     # Get coordinates for this specific threshold
     coords_at_cutoff <- pROC::coords(roc_obj, cutoffs[i], input = "threshold")
     
-    # Store values
+    # Store sensitivity and specificity values
     sensitivity_values[i] <- coords_at_cutoff$sensitivity
     specificity_values[i] <- coords_at_cutoff$specificity
+    
+    # Calculate PPV and NPV if prevalence is provided
+    if(!is.null(prevalence)) {
+      # Calculate PPV: (sensitivity * prevalence) / (sensitivity * prevalence + (1-specificity) * (1-prevalence))
+      ppv_values[i] <- (sensitivity_values[i] * prevalence) / 
+        (sensitivity_values[i] * prevalence + (1 - specificity_values[i]) * (1 - prevalence))
+      
+      # Calculate NPV: (specificity * (1-prevalence)) / ((1-sensitivity) * prevalence + specificity * (1-prevalence))
+      npv_values[i] <- (specificity_values[i] * (1 - prevalence)) / 
+        ((1 - sensitivity_values[i]) * prevalence + specificity_values[i] * (1 - prevalence))
+    } else {
+      # If no prevalence provided, set to NA
+      ppv_values[i] <- NA
+      npv_values[i] <- NA
+    }
   }
   
   # Create dataframe
@@ -73,9 +92,14 @@ calculate_cutoff_metrics <- function(roc_obj, cutoffs) {
     specificity = round(specificity_values, 3)
   )
   
+  # Add PPV and NPV columns if prevalence was provided
+  if(!is.null(prevalence)) {
+    results_df$ppv <- round(ppv_values, 3)
+    results_df$npv <- round(npv_values, 3)
+  }
+  
   return(results_df)
 }
-
 #' Find the optimal cutoff point using Youden's J statistic
 #' 
 #' @param roc_obj ROC curve object
@@ -166,11 +190,16 @@ create_roc_plot <- function(roc_obj, title, color = "blue", legend_text = "AUC")
     sensitivity = roc_obj$sensitivities
   )
   
-  # Calculate AUC for legend
+  # Calculate AUC and its 95% CI
   auc_value <- round(auc(roc_obj), 3)
   
-  # Create full subtitle text with the custom legend text
-  subtitle_text <- paste(legend_text, "=", auc_value)
+  # Calculate 95% CI for AUC (default method is "delong")
+  ci_result <- ci.auc(roc_obj, conf.level = 0.95)
+  ci_lower <- round(ci_result[1], 3)
+  ci_upper <- round(ci_result[3], 3)
+  
+  # Create full subtitle text with the custom legend text and CI
+  subtitle_text <- paste0(legend_text, " = ", auc_value, " (95% CI: ", ci_lower, "-", ci_upper, ")")
   
   # Create plot
   plot <- ggplot(roc_df, aes(x = specificity, y = sensitivity)) +

@@ -71,9 +71,12 @@ legend("bottomright",
 
 # Urine
 ```{r}
+# Calculate Prevalence 
+prevalence_urine <- sum(month12$ut_result)/length(month12$ut_result)
+
 # Calculate cutoff metrics for urine
 cutoffs_urine <- seq(0, 100, by = 10)
-results_urine <- calculate_cutoff_metrics(urine_results$roc, cutoffs_urine)
+results_urine <- calculate_cutoff_metrics(urine_results$roc, cutoffs_urine, prevalence = prevalence_urine)
 
 # Find best cutoff for urine
 best_cutoff_urine <- find_best_cutoff(urine_results$roc)
@@ -86,9 +89,12 @@ cutoff_90sens_urine <- closest_to_90$threshold
 
 # Hair (Neg/Pos)
 ```{r}
+#Calculate Prevalence
+prevalence_hair <- sum(month12$detect_tfv, na.rm = TRUE)/length(month12$detect_tfv[!is.na(month12$detect_tfv)])
+
 # Calculate cutoff metrics for hair
 cutoffs_hair <- seq(0, 100, by = 10)
-results_hair <- calculate_cutoff_metrics(hair_results$roc, cutoffs_hair)
+results_hair <- calculate_cutoff_metrics(hair_results$roc, cutoffs_hair, prevalence = prevalence_hair)
 
 # Find best cutoff for hair
 best_cutoff_hair <- find_best_cutoff(hair_results$roc)
@@ -98,8 +104,11 @@ results_hair
 
 # Hair (Low/High)
 ```{r}
+#Calculate Prevalence
+prevalence_hair2 <- sum(month12$hair2_coded, na.rm = TRUE)/length(month12$hair2_coded[!is.na(month12$hair2_coded)])
+
 # Calculate cutoff metrics for hair2
-results_hair2 <- calculate_cutoff_metrics(hair2_results$roc, cutoffs_hair)
+results_hair2 <- calculate_cutoff_metrics(hair2_results$roc, cutoffs_hair, prevalence = prevalence_hair2)
 
 # Find best cutoff for hair2
 best_cutoff_hair2 <- find_best_cutoff(hair2_results$roc)
