@@ -144,6 +144,7 @@ results_combined <- calculate_cutoff_metrics(combined_results$roc, cutoffs)
 
 results_combined
 ```
+
 # Combined ROC Plots
 ```{r}
 # 1. Combined model (adherence score + urine)
@@ -159,7 +160,8 @@ plot3 <- create_roc_plot(hair_results$roc, "Self-Report Adherence Prediction of 
 plot4 <- create_roc_plot(hair2_results$roc, "Self-Report Adherence Prediction of Hair Results", "purple", "Hair (Neg + Low/High), AUC")
 
 # Combine all plots into a 2x2 grid
-combined_plot <- grid.arrange(plot1, plot2, plot3, plot4, ncol = 2)
+combined_plot <- grid.arrange(plot1, plot4, plot2, plot3, ncol = 2)
+combined_plot
 
 # Save the combined plot
 ggsave(file.path(output_path, "/combined_roc_plots.png"), combined_plot, width = 12, height = 8, dpi = 300)
