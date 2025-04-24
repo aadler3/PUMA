@@ -303,7 +303,7 @@ saveRDS(primary_wide, file = file.path(pathway, "/Code/RDS/puma_primary_wide.rds
 # Turn secondary dataset into wide dataset
 puma_all <- as.data.frame(puma_all) #must be just data.frame for next step to work
 
-secondary_long <- puma_all %>% select(ptid, group_new, visit, detect_tfv, ut_result,
+secondary_long <- puma_all %>% select(ptid, group_new, visit, detect_tfv, ut_result, hair2_coded, hair2code, 
                                     wilson_adh, wilson_adh_scaled_sd, padh4, padh7,
                                     ppoz_coded, marital, income, travel_coded, 
                                     incsource_coded, edu, emp_coded,mh14, sex1, 

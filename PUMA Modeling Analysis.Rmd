@@ -209,7 +209,7 @@ predictors <- c("wilson_adh", "wilson_adh_scaled_sd", "padh4", "padh7",
                 "prep_length", "condomless_sex", "sex14", "age")
 
 # List of outcome variables
-outcomes <- c("ut_result", "detect_tfv")
+outcomes <- c("ut_result", "hair2_coded")
 
 # Run univariable analysis
 univariable_results <- run_univariable_analysis(
@@ -257,17 +257,26 @@ flextable(age_results)
 ## edu
 edu_results <- run_gee_model(
   secondary_long,
-  outcome = "detect_tfv",
+  outcome = "hair2_coded",
   predictors = c("edu")
 )
 
 flextable(edu_results)
+
+## age
+age_results_h <- run_gee_model(
+  secondary_long,
+  outcome = "hair2_coded",
+  predictors = c("age")
+)
+
+flextable(age_results_h)
 ```
 
 ## Forward Selection with Significant Variables
 ### Urine
 ```{r}
-forward_selection_vars <- c("edu", "emp_coded", "age", "detect_tfv", "ut_result", 
+forward_selection_vars <- c("edu", "emp_coded", "age", "hair2_coded", "ut_result", 
                             "group_new", "wilson_adh_scaled_sd", "ptid")
 
 multivar_data <- secondary_long[forward_selection_vars]
@@ -275,7 +284,7 @@ multivar_data <- secondary_long[forward_selection_vars]
 ### Urine Assay
 # Remove NAs
 multivar_data <-multivar_data[complete.cases(multivar_data),]
-ut_multivar <- multivar_data %>% select(-detect_tfv)
+ut_multivar <- multivar_data %>% select(-hair2_coded)
 
 ## Manual stepwise
 
@@ -344,7 +353,7 @@ hr_multivar <- multivar_data %>% select(-ut_result)
 ## Manual stepwise
 
 # Start with minimum model
-min_model_hr <- geeglm(detect_tfv ~ group_new,
+min_model_hr <- geeglm(hair2_coded ~ group_new,
                 id = ptid,
                 family = poisson(link = "log"),
                 corstr = "exchangeable",
@@ -352,7 +361,7 @@ min_model_hr <- geeglm(detect_tfv ~ group_new,
 QIC(min_model_hr)
 
 # Add in Wilson ADH
-wilson_model_hr <- geeglm(detect_tfv ~ group_new + wilson_adh_scaled_sd,
+wilson_model_hr <- geeglm(hair2_coded ~ group_new + wilson_adh_scaled_sd,
                 id = ptid,
                 family = poisson(link = "log"),
                 corstr = "exchangeable",
@@ -360,7 +369,7 @@ wilson_model_hr <- geeglm(detect_tfv ~ group_new + wilson_adh_scaled_sd,
 QIC(wilson_model_hr)
 
 # Add in edu
-edu_model_hr <- geeglm(detect_tfv ~ group_new + wilson_adh_scaled_sd + edu,
+edu_model_hr <- geeglm(hair2_coded ~ group_new + wilson_adh_scaled_sd + edu,
                 id = ptid,
                 family = poisson(link = "log"),
                 corstr = "exchangeable",
@@ -369,7 +378,7 @@ edu_model_hr <- geeglm(detect_tfv ~ group_new + wilson_adh_scaled_sd + edu,
 QIC(edu_model_hr)
 
 # Just edu by itself
-edu_model2_hr <- geeglm(detect_tfv ~ group_new + edu,
+edu_model2_hr <- geeglm(hair2_coded ~ group_new + edu,
                 id = ptid,
                 family = poisson(link = "log"),
                 corstr = "exchangeable",
@@ -377,10 +386,19 @@ edu_model2_hr <- geeglm(detect_tfv ~ group_new + edu,
 # QIC is higher than above
 QIC(edu_model2_hr)
 
+# Add in age
+age_edu_model_hr <- geeglm(hair2_coded ~ group_new + wilson_adh_scaled_sd + edu + age,
+                id = ptid,
+                family = poisson(link = "log"),
+                corstr = "exchangeable",
+                data = hr_multivar)
+# QIC is lower than just Wilson ADH
+QIC(age_edu_model_hr)
+
 ## Print full model with education status
 full_m_hr <- run_gee_model(
   secondary_long,
-  outcome = "detect_tfv",
+  outcome = "hair2_coded",
   predictors = c("group_new", "wilson_adh_scaled_sd", "edu")
 )
 
@@ -409,14 +427,14 @@ QIC(m_ut_glm)
 #Hair
 m_hair <- run_gee_model(
   secondary_long,
-  outcome = "detect_tfv",
+  outcome = "hair2_coded",
   predictors = c("group_new", "wilson_adh_scaled_sd", "edu", "age")
 )
 
 flextable(m_hair)
 
 ## Check QIC using geeglm
-mhair_glm <- geeglm(detect_tfv ~ group_new + edu + age + wilson_adh_scaled_sd,
+mhair_glm <- geeglm(hair2_coded ~ group_new + edu + age + wilson_adh_scaled_sd,
                 id = ptid,
                 family = poisson(link = "log"),
                 corstr = "exchangeable",

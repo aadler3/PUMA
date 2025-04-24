@@ -53,7 +53,7 @@ puma_all$group_new <- factor(puma_all$group_new, levels = c("Standard of Care", 
 ut_long$group_new <- factor(ut_long$group_new, levels = c("Standard of Care", "Intervention"))
 
 # create a list of binary variables to code as yes/no from 1/0
-table1_data <- baseline
+table1_data <- puma_all %>% filter(visit == 1)
 
 bin_variables <- c("marital", "sex8", "sex10", "sex12", "sex14", "par5___1", "par5___2",
                    "par5___3", "par5___4", "par5___5", "par5___6", "par5___7", 
@@ -428,6 +428,25 @@ padh4_t_tests <- compare_across_visits(
   test_func = t.test
 )
 ```
+
+## Median Self-report by Hair and Urine Results (month 12)
+```{r}
+## Hair
+hair_high <- month12 %>% filter(hair2_coded == 1)
+hair_low <- month12 %>% filter(hair2_coded == 0)
+
+summary(hair_high$wilson_adh)
+summary(hair_low$wilson_adh)
+
+## Urine
+ut_pos <- month12 %>% filter(ut_result == 1)
+ut_neg <- month12 %>% filter(ut_result == 0)
+
+summary(ut_pos$wilson_adh)
+summary(ut_neg$wilson_adh)
+
+```
+
 
 # Retention over Study Period
 ```{r}
