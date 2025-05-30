@@ -148,19 +148,19 @@ results_combined
 # Combined ROC Plots
 ```{r}
 # 1. Combined model (adherence score + urine)
-plot1 <- create_roc_plot(combined_results$roc, "Self-Report Adherence and Urine Result Prediction for Hair Results", "blue", "Hair (Neg + Low/High), AUC")
+plot1 <- create_roc_plot(hair2_results$roc, "A. Self-Report Adherence Prediction of Hair Results", "purple", "Hair (Neg + Low/High), AUC")
+
+# 2. Combined model (adherence score + urine 
+plot2 <-  create_roc_plot(combined_results$roc, "B. Self-Report Adherence and Urine Result Prediction for Hair Results", "blue", "Hair (Neg + Low/High), AUC")
 
 # 2. Urine outcome
-plot2 <- create_roc_plot(urine_results$roc, "Self-Report Adherence Prediction of Urine Results", "red", "Urine (Neg/Pos), AUC")
+plot3 <- create_roc_plot(urine_results$roc, "C. Self-Report Adherence Prediction of Urine Results", "red", "Urine (Neg/Pos), AUC")
 
 # 3. Hair Outcome
-plot3 <- create_roc_plot(hair_results$roc, "Self-Report Adherence Prediction of Hair Results", "green", "Hair (Neg/Pos), AUC")
-
-# 4. Another analysis (e.g., with interaction terms)
-plot4 <- create_roc_plot(hair2_results$roc, "Self-Report Adherence Prediction of Hair Results", "purple", "Hair (Neg + Low/High), AUC")
+plot4 <- create_roc_plot(hair_results$roc, "D. Self-Report Adherence Prediction of Hair Results", "green", "Hair (Neg/Pos), AUC")
 
 # Combine all plots into a 2x2 grid
-combined_plot <- grid.arrange(plot1, plot4, plot2, plot3, ncol = 2)
+combined_plot <- grid.arrange(plot1, plot2, plot3, plot4, ncol = 2)
 combined_plot
 
 # Save the combined plot
