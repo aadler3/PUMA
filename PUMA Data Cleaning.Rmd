@@ -252,11 +252,11 @@ write.csv(ut_wide, file.path(pathway, "/Code/CSVs/PUMA_urine_wide.csv"))
 saveRDS(ut_wide, file = file.path(pathway, "/Code/RDS/puma_urine_wide.rds"))
 
 # Hair
-hair_long <- puma_all %>% select(group, detect_tfv, visit, ptid)
+hair_long <- puma_all %>% select(group, detect_tfv, hair2_coded, hair2code, visit, ptid)
 
 hair_long <- as.data.frame(hair_long)
 
-hair_wide <- reshape(hair_long, v.names = "detect_tfv", idvar = c("ptid", "group"), 
+hair_wide <- reshape(hair_long, v.names = c("detect_tfv", "hair2_coded", "hair2code"), idvar = c("ptid", "group"), 
                    timevar = "visit", direction = "wide")
 
 # EXPORT

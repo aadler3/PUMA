@@ -153,6 +153,29 @@ hair_categorical_results <- analyze_categorical_across_visits(
   group_var = "group_new"
 )
 
+# Run chi-squared tests for all visits using a loop for categorical hair
+chi_results_hair_cat <- data.frame(
+  Visit = 1:5,
+  ChiSq = numeric(5),
+  P_value = numeric(5),
+  Overall_p = numeric(5)
+)
+
+for (i in 1:5) {
+  var_name <- paste0("hair2_coded.", i)
+  
+  # Between-group test
+  test_result <- run_chi_square(hair_wide, "group", var_name)
+  chi_results_hair_cat$ChiSq[i] <- test_result$statistic
+  chi_results_hair_cat$P_value[i] <- test_result$p.value
+  
+  # Overall test
+  overall_test <- run_chi_square(hair_wide, var_name)
+  chi_results_hair_cat$Overall_p[i] <- overall_test$p.value
+}
+
+print(chi_results_hair_cat)
+
 # Continuous Hair Variable (non-modified)
 # Loop through visits 1-5 to calculate mean and sd of tfvngml
 for (i in 1:5) {
