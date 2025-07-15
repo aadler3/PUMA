@@ -1,0 +1,6 @@
+CSVs/
+Output/
+RDS/
+*.DS_Store
+*.RData
+*.Rhistory
