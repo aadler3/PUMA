@@ -48,9 +48,9 @@ hair_results <- create_roc(month12$detect_tfv, month12$wilson_adh)
 hair2_results <- create_roc(month12$hair2_coded, month12$wilson_adh)
 
 # Create legend labels with AUC values
-urine_legend <- create_legend_with_auc("Urine (Neg/Pos)", urine_results$auc)
-hair_legend <- create_legend_with_auc("Hair (Neg/Pos)", hair_results$auc)
-hair2_legend <- create_legend_with_auc("Hair (Neg + Low/High)", hair2_results$auc)
+urine_legend <- create_legend_with_auc("Urine (Neg vs Pos)", urine_results$auc)
+hair_legend <- create_legend_with_auc("Hair (Neg vs Pos)", hair_results$auc)
+hair2_legend <- create_legend_with_auc("Hair (Neg + Low vs High)", hair2_results$auc)
 
 # Plot ROC curves with AUC values in the legend
 plot_multiple_roc(
@@ -148,16 +148,19 @@ results_combined
 # Combined ROC Plots
 ```{r}
 # 1. Combined model (adherence score + urine)
-plot1 <- create_roc_plot(hair2_results$roc, "A. Self-Report Adherence Prediction of Hair Results", "purple", "Hair (Neg + Low/High), AUC")
+plot1 <- create_roc_plot(hair2_results$roc, "A. Self-Report Adherence Prediction of Hair Results
+     (Neg + Low vs High)", "purple", "Hair (Neg + Low vs High), AUC")
 
 # 2. Combined model (adherence score + urine 
-plot2 <-  create_roc_plot(combined_results$roc, "B. Self-Report Adherence and Urine Result Prediction for Hair Results", "blue", "Hair (Neg + Low/High), AUC")
+plot2 <-  create_roc_plot(combined_results$roc, "B. Combined Self-Report Adherence and 
+     Urine Result Prediction of Hair Results", "blue", "Hair (Neg + Low vs High), AUC")
 
 # 2. Urine outcome
-plot3 <- create_roc_plot(urine_results$roc, "C. Self-Report Adherence Prediction of Urine Results", "red", "Urine (Neg/Pos), AUC")
+plot3 <- create_roc_plot(urine_results$roc, "C. Self-Report Adherence Prediction of Urine Results", "red", "Urine (Neg vs Pos), AUC")
 
 # 3. Hair Outcome
-plot4 <- create_roc_plot(hair_results$roc, "D. Self-Report Adherence Prediction of Hair Results", "green", "Hair (Neg/Pos), AUC")
+plot4 <- create_roc_plot(hair_results$roc, "D. Self-Report Adherence Prediction of Hair Results 
+     (Neg vs Pos)", "green", "Hair (Neg vs Pos), AUC")
 
 # Combine all plots into a 2x2 grid
 combined_plot <- grid.arrange(plot1, plot2, plot3, plot4, ncol = 2)

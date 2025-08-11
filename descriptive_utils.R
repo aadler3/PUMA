@@ -16,7 +16,10 @@ summarize_by_group <- function(data, var_name, group_var = NULL, na.rm = TRUE, r
       N = sum(!is.na(data[[var_name]])),
       Missing = sum(is.na(data[[var_name]])),
       Mean = round(mean(data[[var_name]], na.rm = na.rm), round_digits),
-      SD = round(sd(data[[var_name]], na.rm = na.rm), round_digits)
+      SD = round(sd(data[[var_name]], na.rm = na.rm), round_digits),
+      Median = round(median(data[[var_name]], na.rm = na.rm), round_digits),
+      Lower_Q = round(quantile(data[[var_name]], 0.25, na.rm = na.rm), round_digits),
+      Upper_Q = round(quantile(data[[var_name]], 0.75, na.rm = na.rm), round_digits)
     )
     return(result)
   } else {
@@ -36,7 +39,10 @@ summarize_by_group <- function(data, var_name, group_var = NULL, na.rm = TRUE, r
         N = sum(!is.na(subset_data[[var_name]])),
         Missing = sum(is.na(subset_data[[var_name]])),
         Mean = round(mean(subset_data[[var_name]], na.rm = na.rm), round_digits),
-        SD = round(sd(subset_data[[var_name]], na.rm = na.rm), round_digits)
+        SD = round(sd(subset_data[[var_name]], na.rm = na.rm), round_digits),
+        Median = round(median(subset_data[[var_name]], na.rm = na.rm), round_digits),
+        Lower_Q = round(quantile(subset_data[[var_name]], 0.25, na.rm = na.rm), round_digits),
+        Upper_Q = round(quantile(subset_data[[var_name]], 0.75, na.rm = na.rm), round_digits)
       )
       results <- rbind(results, group_result)
     }

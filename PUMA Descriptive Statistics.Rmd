@@ -334,6 +334,9 @@ for (visit in 1:5) {
   wilson_summary$Overall_N[visit] <- length(valid_data)
   wilson_summary$Overall_Mean[visit] <- mean(valid_data)
   wilson_summary$Overall_SD[visit] <- sd(valid_data)
+  wilson_summary$Overall_Median[visit] <- median(valid_data)
+  wilson_summary$Overall_LQ[visit] <- quantile(valid_data, 0.25)
+  wilson_summary$Overall_UQ[visit] <- quantile(valid_data, 0.75)
   
   # By group
   for (group in unique(adherence_wide$group_new)) {
@@ -341,6 +344,9 @@ for (visit in 1:5) {
     wilson_summary[[paste0(group, "_N")]][visit] <- length(group_data)
     wilson_summary[[paste0(group, "_Mean")]][visit] <- mean(group_data)
     wilson_summary[[paste0(group, "_SD")]][visit] <- sd(group_data)
+    wilson_summary[[paste0(group, "_Median")]][visit] <- median(group_data)
+    wilson_summary[[paste0(group, "_LQ")]][visit] <- quantile(group_data, 0.25)
+    wilson_summary[[paste0(group, "_UQ")]][visit] <- quantile(group_data, 0.75)    
   }
 }
 
@@ -367,6 +373,9 @@ padh7_results <- data.frame(
   NA_Count = numeric(),
   Mean = numeric(),
   SD = numeric(),
+  Median = numeric(),
+  Lower_Q = numeric(),
+  Upper_Q  = numeric(),
   stringsAsFactors = FALSE
 )
 
@@ -386,7 +395,10 @@ for (d in 1:length(datasets)) {
       NonNA_Count = summary_stats$N,
       NA_Count = summary_stats$Missing,
       Mean = summary_stats$Mean,
-      SD = summary_stats$SD
+      SD = summary_stats$SD,
+      Median = summary_stats$Median,
+      Lower_Q = summary_stats$Lower_Q,
+      Upper_Q = summary_stats$Upper_Q
     ))
   }
 }
@@ -451,6 +463,29 @@ padh4_t_tests <- compare_across_visits(
   test_func = t.test
 )
 ```
+## Median Self-Reported Adherence By group
+```{r}
+# Run analysis for wilson_adh
+summary(adherence_poc$wilson_adh.1)
+summary(adherence_poc$wilson_adh.2)
+summary(adherence_poc$wilson_adh.3)
+summary(adherence_poc$wilson_adh.4)
+summary(adherence_poc$wilson_adh.5)
+
+summary(adherence_soc$wilson_adh.1)
+summary(adherence_soc$wilson_adh.2)
+summary(adherence_soc$wilson_adh.3)
+summary(adherence_soc$wilson_adh.4)
+summary(adherence_soc$wilson_adh.5)
+
+# Wilcox Test
+wilcox.test(wilson_adh.1 ~ group_new, data = adherence_wide)
+wilcox.test(wilson_adh.2 ~ group_new, data = adherence_wide)
+wilcox.test(wilson_adh.3 ~ group_new, data = adherence_wide)
+wilcox.test(wilson_adh.4 ~ group_new, data = adherence_wide)
+wilcox.test(wilson_adh.5 ~ group_new, data = adherence_wide)
+```
+
 
 ## Median Self-report by Hair and Urine Results (month 12)
 ```{r}
