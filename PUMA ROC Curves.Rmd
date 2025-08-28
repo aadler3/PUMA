@@ -45,7 +45,7 @@ source(file.path(pathway, "roc_utils.R"))
 # Create ROC objects using utility function
 urine_results <- create_roc(month12$ut_result, month12$wilson_adh)
 hair_results <- create_roc(month12$detect_tfv, month12$wilson_adh)
-hair2_results <- create_roc(month12$hair2_coded, month12$wilson_adh)
+hair2_results <- create_roc(month12$STRAND_hair_bin, month12$wilson_adh)
 
 # Create legend labels with AUC values
 urine_legend <- create_legend_with_auc("Urine (Neg vs Pos)", urine_results$auc)
@@ -105,7 +105,9 @@ results_hair
 # Hair (Low/High)
 ```{r}
 #Calculate Prevalence
-prevalence_hair2 <- sum(month12$hair2_coded, na.rm = TRUE)/length(month12$hair2_coded[!is.na(month12$hair2_coded)])
+month12 <- month12 %>% mutate(STRAND_hair_bin_coded = ifelse(STRAND_hair_bin == ">= 4", 1, 0))
+
+prevalence_hair2 <- sum(month12$STRAND_hair_bin_coded, na.rm = TRUE)/length(month12$STRAND_hair_bin_coded[!is.na(month12$STRAND_hair_bin_coded)])
 
 # Calculate cutoff metrics for hair2
 results_hair2 <- calculate_cutoff_metrics(hair2_results$roc, cutoffs_hair, prevalence = prevalence_hair2)
@@ -120,11 +122,11 @@ results_hair2
 ```{r}
 # Create a combined model using utility function
 predictors_df <- month12 %>% 
-  select(ut_result, wilson_adh, hair2_coded) %>% 
-  filter(!is.na(hair2_coded))
+  select(ut_result, wilson_adh, STRAND_hair_bin_coded) %>% 
+  filter(!is.na(STRAND_hair_bin_coded))
 
 combined_results <- create_combined_roc(
-  response = month12$hair2_coded[!is.na(month12$hair2_coded)],
+  response = month12$STRAND_hair_bin_coded[!is.na(month12$STRAND_hair_bin_coded)],
   predictors = predictors_df,
   model_formula = as.formula("response ~ wilson_adh + ut_result"),
   family = poisson(link = "log")
@@ -149,21 +151,21 @@ results_combined
 ```{r}
 # 1. Combined model (adherence score + urine)
 plot1 <- create_roc_plot(hair2_results$roc, "A. Self-Report Adherence Prediction of Hair Results
-     (Neg + Low vs High)", "purple", "Hair (Neg + Low vs High), AUC")
+     (0.0168 ng/mL as cutoff)", "purple", "Hair (0.023 ng/mL as cutoff), AUC")
 
 # 2. Combined model (adherence score + urine 
-plot2 <-  create_roc_plot(combined_results$roc, "B. Combined Self-Report Adherence and 
-     Urine Result Prediction of Hair Results", "blue", "Hair (Neg + Low vs High), AUC")
+plot2 <-  create_roc_plot(combined_results$roc, "C. Combined Self-Report Adherence and 
+     Urine Result Prediction of Hair Results", "blue", "Hair (0.023 ng/mL as cutoff), AUC")
 
 # 2. Urine outcome
-plot3 <- create_roc_plot(urine_results$roc, "C. Self-Report Adherence Prediction of Urine Results", "red", "Urine (Neg vs Pos), AUC")
+plot3 <- create_roc_plot(urine_results$roc, "D. Self-Report Adherence Prediction of Urine Results", "red", "Urine (1500 ng/mL as cutoff), AUC")
 
 # 3. Hair Outcome
-plot4 <- create_roc_plot(hair_results$roc, "D. Self-Report Adherence Prediction of Hair Results 
-     (Neg vs Pos)", "green", "Hair (Neg vs Pos), AUC")
+plot4 <- create_roc_plot(hair_results$roc, "B. Self-Report Adherence Prediction of Hair Results 
+     (0.002 ng/mL as cutoff)", "green", "Hair (0.002 ng/mL as cutoff), AUC")
 
 # Combine all plots into a 2x2 grid
-combined_plot <- grid.arrange(plot1, plot2, plot3, plot4, ncol = 2)
+combined_plot <- grid.arrange(plot1, plot4, plot2, plot3, ncol = 2)
 combined_plot
 
 # Save the combined plot

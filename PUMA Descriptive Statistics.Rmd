@@ -57,7 +57,7 @@ table1_data <- puma_all %>% filter(visit == 1)
 
 bin_variables <- c("marital", "sex8", "sex10", "sex12", "sex14", "par5___1", "par5___2",
                    "par5___3", "par5___4", "par5___5", "par5___6", "par5___7", 
-                   "par5___8", "par5___9", "padh3", "padh9___1", "padh9___2", 
+                   "par5___8", "par5___9",  "padh9___1", "padh9___2", 
                    "padh9___3", "padh9___4", "padh9___5", "padh9___6", "padh9___7",
                    "padh9___8", "padh9___9", "padh9___10", "padh9___11", "padh9___12",
                    "padh9___13", "padh9___14", "padh9___15", "padh9____9", "padh10",
@@ -71,19 +71,19 @@ for (var in bin_variables){
 }
 
 table1_data <- table1_data %>% select("age", "edu", "income", "sex1", "prep_length", 
-                                      "padh3", "padh6", "emp_coded", 
+                                      "padh4_recode", "padh7_recode", "padh6", "emp_coded", 
                                       "ppoz_coded", "marital", "mh14", "bc_any", 
                                       "travel_coded","incsource_coded", "sex5", 
                                       "sex2", "condomless_sex", "new_partner", 
                                       "HIV_pos_partner", "unknown_HIV", 
                                       "HIV_neg_partner", "sex14","group")
 
-table1_arms <- compareGroups(group~ ., data = table1_data,na.omit(TRUE))
+table1_arms <- compareGroups(group~ ., data = table1_data, method = 2, na.omit(TRUE))
 export_table1_arms <- createTable(table1_arms, show.p.overall=FALSE)
 export_table1_arms
 export2word(export_table1_arms, file = file.path(output_path, "/Tables/Table 1 by Arm.docx"))
 
-table1_all <- compareGroups(~ ., data = table1_data,na.omit(TRUE))
+table1_all <- compareGroups(~ ., data = table1_data, method = 2, na.omit(TRUE))
 export_table1_all <- createTable(table1_all, show.p.overall=FALSE)
 export_table1_all
 export2word(export_table1_all, file = file.path(output_path, "/Tables/Table 1 Total.docx"))
@@ -148,7 +148,7 @@ print(chi_results_hair)
 # Analyze all categorical hair variables
 hair_categorical_results <- analyze_categorical_across_visits(
   data = puma_all,
-  var_names = c("hair3code", "hair4blq", "hair2code"),
+  var_names = c("STRAND_hair", "STRAND_hair_bin"),
   visits = 1:5,
   group_var = "group_new"
 )
@@ -162,7 +162,7 @@ chi_results_hair_cat <- data.frame(
 )
 
 for (i in 1:5) {
-  var_name <- paste0("hair2_coded.", i)
+  var_name <- paste0("STRAND_hair.", i)
   
   # Between-group test
   test_result <- run_chi_square(hair_wide, "group", var_name)
@@ -175,6 +175,22 @@ for (i in 1:5) {
 }
 
 print(chi_results_hair_cat)
+
+
+table(hair_wide$STRAND_hair_bin.1, hair_wide$group)
+chisq.test(hair_wide$STRAND_hair_bin.1, hair_wide$group)
+
+table(hair_wide$STRAND_hair_bin.2, hair_wide$group)
+chisq.test(hair_wide$STRAND_hair_bin.2, hair_wide$group)
+
+table(hair_wide$STRAND_hair_bin.3, hair_wide$group)
+chisq.test(hair_wide$STRAND_hair_bin.3, hair_wide$group)
+
+table(hair_wide$STRAND_hair_bin.4, hair_wide$group)
+chisq.test(hair_wide$STRAND_hair_bin.4, hair_wide$group)
+
+table(hair_wide$STRAND_hair_bin.5, hair_wide$group)
+chisq.test(hair_wide$STRAND_hair_bin.5, hair_wide$group)
 
 # Continuous Hair Variable (non-modified)
 # Loop through visits 1-5 to calculate mean and sd of tfvngml
@@ -490,8 +506,10 @@ wilcox.test(wilson_adh.5 ~ group_new, data = adherence_wide)
 ## Median Self-report by Hair and Urine Results (month 12)
 ```{r}
 ## Hair
-hair_high <- month12 %>% filter(hair2_coded == 1)
-hair_low <- month12 %>% filter(hair2_coded == 0)
+month12 <- month12 %>% mutate(strand_coded_bin = ifelse(STRAND_hair_bin == ">= 4", 1, 0))
+
+hair_high <- month12 %>% filter(strand_coded_bin == 1)
+hair_low <- month12 %>% filter(strand_coded_bin == 0)
 
 summary(hair_high$wilson_adh)
 summary(hair_low$wilson_adh)

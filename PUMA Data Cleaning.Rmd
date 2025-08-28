@@ -33,6 +33,7 @@ pathway <- "~/Library/CloudStorage/Box-Box/Puma Analysis/Analysis/"
 puma_all <- read.csv(file.path(pathway, "PUMAextract_13Mar2025.csv"))
 ```
 
+
 # New Variable Creation/Cleaning
 ```{r}
 # Create any BC variable
@@ -174,6 +175,23 @@ puma_all <- puma_all %>% relocate(wilson_cat, .after = wilson_adh)
 
 ```
 
+# Hair variables
+```{r}
+puma_hair <- puma_all %>% select(ptid, tfvngml, tfvcomments, blq, tfvmodif, log2tfv, rx, hair3code, hair4code, hair4blq, hair5blq, hair3blq, detect_tfv)
+
+puma_all <- puma_all %>% mutate(STRAND_hair = case_when(tfvngml < 0.012 ~ "Less than 2 doses per week",
+                                                        (tfvngml >= 0.012) & (tfvngml <0.023) ~ "2 doses per week",
+                                                        (tfvngml >= 0.023) & (tfvngml <0.038) ~ "4 doses per week",
+                                                        tfvngml >= 0.038  ~ "7 doses per week"
+                                                        ))
+
+puma_all <- puma_all %>% mutate(STRAND_hair_bin = case_when(tfvngml < 0.023 ~ "<= 3",
+                                                            tfvngml >= 0.023 ~ ">= 4"))
+
+puma_all <- puma_all %>% relocate(STRAND_hair, STRAND_hair_bin, .after = tfvngml)
+```
+
+
 ## Write out new CSVs for cleaned data
 ```{r}
 #csv
@@ -252,11 +270,11 @@ write.csv(ut_wide, file.path(pathway, "/Code/CSVs/PUMA_urine_wide.csv"))
 saveRDS(ut_wide, file = file.path(pathway, "/Code/RDS/puma_urine_wide.rds"))
 
 # Hair
-hair_long <- puma_all %>% select(group, detect_tfv, hair2_coded, hair2code, visit, ptid)
+hair_long <- puma_all %>% select(group, detect_tfv, STRAND_hair, STRAND_hair_bin, visit, ptid)
 
 hair_long <- as.data.frame(hair_long)
 
-hair_wide <- reshape(hair_long, v.names = c("detect_tfv", "hair2_coded", "hair2code"), idvar = c("ptid", "group"), 
+hair_wide <- reshape(hair_long, v.names = c("detect_tfv", "STRAND_hair", "STRAND_hair_bin"), idvar = c("ptid", "group"), 
                    timevar = "visit", direction = "wide")
 
 # EXPORT
@@ -285,7 +303,8 @@ saveRDS(adherence_wide, file = file.path(pathway, "/Code/RDS/puma_adherence_wide
 ## Turn primary dataset into wide dataset
 puma_all <- as.data.frame(puma_all) #must be just data.frame for next step to work
 
-primary_long <- puma_all %>% select(ptid, group_new, visit, detect_tfv, ut_result,
+primary_long <- puma_all %>% select(ptid, group_new, visit, detect_tfv, ut_result, STRAND_hair,
+                                    STRAND_hair_bin,
                                     wilson_adh, wilson_adh_scaled_sd)
 
 primary_wide <- reshape(primary_long, idvar = c("ptid", "group_new"), timevar = "visit", direction = "wide")
@@ -303,7 +322,8 @@ saveRDS(primary_wide, file = file.path(pathway, "/Code/RDS/puma_primary_wide.rds
 # Turn secondary dataset into wide dataset
 puma_all <- as.data.frame(puma_all) #must be just data.frame for next step to work
 
-secondary_long <- puma_all %>% select(ptid, group_new, visit, detect_tfv, ut_result, hair2_coded, hair2code, 
+secondary_long <- puma_all %>% select(ptid, group_new, visit, detect_tfv, ut_result, STRAND_hair,
+                                      STRAND_hair_bin,
                                     wilson_adh, wilson_adh_scaled_sd, padh4, padh7,
                                     ppoz_coded, marital, income, travel_coded, 
                                     incsource_coded, edu, emp_coded,mh14, sex1, 

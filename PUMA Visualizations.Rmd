@@ -223,14 +223,19 @@ ut_density
 # Stratified Hair Level Categories by Study Arm Visualization
 ```{r}
 # Visualization at Month 12
-aggregated_data <- month12 %>% filter(!is.na(hair3code)) %>%
-  group_by(hair3code) %>%
+aggregated_data <- month12 %>% filter(!is.na(STRAND_hair)) %>%
+  group_by(STRAND_hair) %>%
   summarise(
     mean_adh = mean(wilson_adh, na.rm = TRUE),
     sd_adh = sd(wilson_adh, na.rm = TRUE)
   )
 
-month12_plot <- ggplot(aggregated_data, aes(x = hair3code, y = mean_adh)) +
+aggregated_data <- aggregated_data %>% mutate(STRAND_hair = case_when(STRAND_hair == "2 doses per week" ~ "2-3",
+                                                                      STRAND_hair == "4 doses per week" ~ "4-6",
+                                                                      STRAND_hair == "7 doses per week" ~ "7",
+                                                                      STRAND_hair == "Less than 2 doses per week" ~ "< 2"))
+
+month12_plot <- ggplot(aggregated_data, aes(x = STRAND_hair, y = mean_adh)) +
   geom_bar(stat = "identity", fill = "slategray2") +
   labs(
     title = "Month 12",
@@ -247,14 +252,19 @@ month12_plot <- ggplot(aggregated_data, aes(x = hair3code, y = mean_adh)) +
 month12_plot
 
 month1_data <- puma_all %>% filter(visit == 1)
-month1_aggregate <- month1_data %>% filter(!is.na(hair3code)) %>%
-  group_by(hair3code) %>%
+month1_aggregate <- month1_data %>% filter(!is.na(STRAND_hair)) %>%
+  group_by(STRAND_hair) %>%
   summarise(
     mean_adh = mean(wilson_adh, na.rm = TRUE),
     sd_adh = sd(wilson_adh, na.rm = TRUE)
   )
 
-month1_plot <- ggplot(month1_aggregate, aes(x = hair3code, y = mean_adh)) +
+month1_aggregate <- month1_aggregate %>% mutate(STRAND_hair = case_when(STRAND_hair == "2 doses per week" ~ "2-3",
+                                                                      STRAND_hair == "4 doses per week" ~ "4-6",
+                                                                      STRAND_hair == "7 doses per week" ~ "7",
+                                                                      STRAND_hair == "Less than 2 doses per week" ~ "< 2"))
+
+month1_plot <- ggplot(month1_aggregate, aes(x = STRAND_hair, y = mean_adh)) +
   geom_bar(stat = "identity", fill = "slategray2") +
   labs(
     title = "Baseline",
@@ -271,14 +281,19 @@ month1_plot <- ggplot(month1_aggregate, aes(x = hair3code, y = mean_adh)) +
 month1_plot
 
 month6_data <- puma_all %>% filter(visit == 3)
-month6_aggregate <- month6_data %>% filter(!is.na(hair3code)) %>%
-  group_by(hair3code) %>%
+month6_aggregate <- month6_data %>% filter(!is.na(STRAND_hair)) %>%
+  group_by(STRAND_hair) %>%
   summarise(
     mean_adh = mean(wilson_adh, na.rm = TRUE),
     sd_adh = sd(wilson_adh, na.rm = TRUE)
   )
 
-month6_plot <- ggplot(month6_aggregate, aes(x = hair3code, y = mean_adh)) +
+month6_aggregate <- month6_aggregate %>% mutate(STRAND_hair = case_when(STRAND_hair == "2 doses per week" ~ "2-3",
+                                                                      STRAND_hair == "4 doses per week" ~ "4-6",
+                                                                      STRAND_hair == "7 doses per week" ~ "7",
+                                                                      STRAND_hair == "Less than 2 doses per week" ~ "< 2"))
+
+month6_plot <- ggplot(month6_aggregate, aes(x = STRAND_hair, y = mean_adh)) +
   geom_bar(stat = "identity", fill = "slategray2") +
   labs(
     title = "Month 6",

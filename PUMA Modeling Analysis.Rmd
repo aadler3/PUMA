@@ -47,7 +47,8 @@ hair_gee_data <- prepare_gee_data(
   puma_all, 
   outcome = "detect_tfv", 
   predictors = c("wilson_adh_scaled_sd", "group_new"),
-  additional_vars = c("wilson_adh10", "wilson_adh", "hair3numeric", "hair2_coded",
+  additional_vars = c("wilson_adh10", "wilson_adh", "STRAND_hair", "STRAND_hair_bin",
+                      "hair3code", "hair2code", "hair2_coded", "hair3numeric",
                       "emp_coded", "age", "edu")
 )
 
@@ -87,6 +88,8 @@ soc_all <- prepare_gee_data(
 )
 
 soc_all <- soc_all %>% filter(group_new == "Standard of Care")
+
+secondary_long <- secondary_long %>% mutate(STRAND_hair_bin_coded = ifelse(STRAND_hair_bin == ">= 4", 1, 0))
 
 ```
 
@@ -155,9 +158,11 @@ flextable(hair_3cat_results)
 # Hair -- Categorical with 2 codes (High [1; >= 4 doses] vs Low [0; <= 3 doses])
 ## Adherence Scaled by Standard Deviation
 ```{r}
+hair_gee_data <- hair_gee_data %>% mutate(STRAND_hair_bin_coded = ifelse(STRAND_hair_bin == ">= 4", 1, 0))
+
 hair_2cat_results <- run_gee_model(
   hair_gee_data,
-  outcome = "hair2_coded",
+  outcome = "STRAND_hair_bin_coded",
   predictors = c("wilson_adh_scaled_sd", "group_new")
 )
 
@@ -203,31 +208,32 @@ flextable(ut_10_results)
 ## Univariable Analysis 
 ```{r}
 # List of predictor variables selected a priori
-predictors <- c("wilson_adh", "wilson_adh_scaled_sd", "padh4", "padh7",
-                "ppoz_coded", "marital", "income", "travel_coded", 
-                "incsource_coded", "edu", "emp_coded", "mh14", "sex1", 
-                "prep_length", "condomless_sex", "sex14", "age")
+# predictors <- c("wilson_adh", "wilson_adh_scaled_sd", "padh4", "padh7",
+#                 "ppoz_coded", "marital", "income", "travel_coded", 
+#                 "incsource_coded", "edu", "emp_coded", "mh14", "sex1", 
+#                 "prep_length", "condomless_sex", "sex14", "age")
+# 
 
-# List of outcome variables
-outcomes <- c("ut_result", "hair2_coded")
-
-# Run univariable analysis
-univariable_results <- run_univariable_analysis(
-  data = secondary_long,
-  predictors = predictors,
-  outcomes = outcomes
-)
-
-# Get summary of significant predictors
-significant_predictors <- summarize_univariable_results(univariable_results)
-
-# Display the full results table
-print(univariable_results)
-## Associated univariable with ut:
-### emp_coded, age
-
-## Associated univariable with detect_tfv
-### edu 
+# # List of outcome variables
+# outcomes <- c("ut_result", "STRAND_hair_bin_coded")
+# 
+# # Run univariable analysis
+# univariable_results <- run_univariable_analysis(
+#   data = secondary_long,
+#   predictors = predictors,
+#   outcomes = outcomes
+# )
+# 
+# # Get summary of significant predictors
+# significant_predictors <- summarize_univariable_results(univariable_results)
+# 
+# # Display the full results table
+# print(univariable_results)
+# ## Associated univariable with ut:
+# ### emp_coded, age
+# 
+# ## Associated univariable with detect_tfv
+# ### edu 
 ```
 
 ## Univariable Models with Signficiant Associated Variables
@@ -257,7 +263,7 @@ flextable(age_results)
 ## edu
 edu_results <- run_gee_model(
   secondary_long,
-  outcome = "hair2_coded",
+  outcome = "STRAND_hair_bin_coded",
   predictors = c("edu")
 )
 
@@ -266,7 +272,7 @@ flextable(edu_results)
 ## age
 age_results_h <- run_gee_model(
   secondary_long,
-  outcome = "hair2_coded",
+  outcome = "STRAND_hair_bin_coded",
   predictors = c("age")
 )
 
@@ -279,12 +285,12 @@ flextable(age_results_h)
 forward_selection_vars <- c("edu", "emp_coded", "age", "hair2_coded", "ut_result", 
                             "group_new", "wilson_adh_scaled_sd", "ptid")
 
-multivar_data <- secondary_long[forward_selection_vars]
-
+multivar_data <- secondary_long %>% select(edu, emp_coded, age, ut_result, 
+                            group_new, wilson_adh_scaled_sd, ptid, STRAND_hair_bin_coded)
 ### Urine Assay
 # Remove NAs
 multivar_data <-multivar_data[complete.cases(multivar_data),]
-ut_multivar <- multivar_data %>% select(-hair2_coded)
+ut_multivar <- multivar_data %>% select(-STRAND_hair_bin_coded)
 
 ## Manual stepwise
 
@@ -427,14 +433,14 @@ QIC(m_ut_glm)
 #Hair
 m_hair <- run_gee_model(
   secondary_long,
-  outcome = "hair2_coded",
+  outcome = "STRAND_hair_bin_coded",
   predictors = c("group_new", "wilson_adh_scaled_sd", "edu", "age")
 )
 
 flextable(m_hair)
 
 ## Check QIC using geeglm
-mhair_glm <- geeglm(hair2_coded ~ group_new + edu + age + wilson_adh_scaled_sd,
+mhair_glm <- geeglm(STRAND_hair_bin_coded ~ group_new + edu + age + wilson_adh_scaled_sd,
                 id = ptid,
                 family = poisson(link = "log"),
                 corstr = "exchangeable",
