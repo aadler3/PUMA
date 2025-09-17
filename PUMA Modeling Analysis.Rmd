@@ -25,6 +25,10 @@ library(plotROC)
 library(gridExtra)
 library(kableExtra)
 library(ggalluvial)
+library(sandwich) #for robust standard errors
+#install.packages("msm") #NOTE: when installing msm if you get the question "Do you want to install from sources the package which needs compilation?" type "no"
+library(msm) #for delta method 
+library(lmtest)
 ```
 
 # Load Data and Source Functions
@@ -530,7 +534,138 @@ flextable(ut_lrt_results)
 
 ```
 
+## Basline Model (hair)
+```{r}
+baseline <- puma_all %>% filter(visit == 1)
+
+m_baseline_hair <- glm(hair2_coded ~ wilson_adh_scaled_sd + group_new, family="poisson", data=baseline)
+summary(m_baseline_hair) 
+
+#robust standard errors
+cov.m_baseline_hair <- vcovHC(m_baseline_hair, type="HC0")
+std.err.m_baseline_hair <- sqrt(diag(cov.m_baseline_hair))
+r.est.m_baseline_hair <- cbind(Estimate= coef(m_baseline_hair), "Robust SE" = std.err.m_baseline_hair,
+"Pr(>|z|)" = 2 * pnorm(abs(coef(m_baseline_hair)/std.err.m_baseline_hair), lower.tail=FALSE),
+LL = coef(m_baseline_hair) - 1.96 * std.err.m_baseline_hair,
+UL = coef(m_baseline_hair) + 1.96 * std.err.m_baseline_hair)
+
+r.est.m_baseline_hair 
+
+#above results on the log scale, we want IRR, so need to exponentiate our results
+#use the delta method
+s_m_baseline_hair <- deltamethod(list(~ exp(x1), ~ exp(x2), ~ exp(x3)), coef(m_baseline_hair), cov.m_baseline_hair)
+
+## exponentiate old estimates dropping the p values in column 3
+rexp.m_baseline_hair <- exp(r.est.m_baseline_hair [, -3])
+## replace SEs with estimates for exponentiated coefficients
+rexp.m_baseline_hair[, "Robust SE"] <- s_m_baseline_hair
+
+rexp.m_baseline_hair
+
+baseline_high <- baseline %>% filter(hair2_coded == 1)
+summary(baseline_high$wilson_adh)
+baseline_low <- baseline %>% filter(hair2_coded == 0)
+summary(baseline_low$wilson_adh)
+```
+
+## Month 12 model (hair)
+```{r}
+m_m12_hair <- glm(hair2_coded ~ wilson_adh_scaled_sd + group_new, family="poisson", data=month12)
+summary(m_m12_hair) 
+
+#robust standard errors
+cov.m_m12_hair <- vcovHC(m_m12_hair, type="HC0")
+std.err.m_m12_hair <- sqrt(diag(cov.m_m12_hair))
+r.est.m_m12_hair <- cbind(Estimate= coef(m_m12_hair), "Robust SE" = std.err.m_m12_hair,
+"Pr(>|z|)" = 2 * pnorm(abs(coef(m_m12_hair)/std.err.m_m12_hair), lower.tail=FALSE),
+LL = coef(m_m12_hair) - 1.96 * std.err.m_m12_hair,
+UL = coef(m_m12_hair) + 1.96 * std.err.m_m12_hair)
+
+r.est.m_m12_hair 
+
+#above results on the log scale, we want IRR, so need to exponentiate our results
+#use the delta method
+s_m_m12_hair <- deltamethod(list(~ exp(x1), ~ exp(x2), ~ exp(x3)), coef(m_m12_hair), cov.m_m12_hair)
+
+## exponentiate old estimates dropping the p values in column 3
+rexp.m_m12_hair <- exp(r.est.m_m12_hair[, -3])
+## replace SEs with estimates for exponentiated coefficients
+rexp.m_m12_hair[, "Robust SE"] <- s_m_m12_hair
+
+rexp.m_m12_hair
+
+month12_high <- month12 %>% filter(hair2_coded == 1)
+summary(month12_high$wilson_adh)
+month12_low <- month12 %>% filter(hair2_coded == 0)
+summary(month12_low$wilson_adh)
+```
+## Difference Between Models
 ```{r}
 
+```
+
+
+## Basline Model (urine)
+```{r}
+m_baseline_ut <- glm(ut_result ~ wilson_adh_scaled_sd + group_new, family="poisson", data=baseline)
+summary(m_baseline_ut) 
+
+#robust standard errors
+cov.m_baseline_ut <- vcovHC(m_baseline_ut, type="HC0")
+std.err.m_baseline_ut <- sqrt(diag(cov.m_baseline_ut))
+r.est.m_baseline_ut <- cbind(Estimate= coef(m_baseline_ut), "Robust SE" = std.err.m_baseline_ut,
+"Pr(>|z|)" = 2 * pnorm(abs(coef(m_baseline_ut)/std.err.m_baseline_ut), lower.tail=FALSE),
+LL = coef(m_baseline_ut) - 1.96 * std.err.m_baseline_ut,
+UL = coef(m_baseline_ut) + 1.96 * std.err.m_baseline_ut)
+
+r.est.m_baseline_ut 
+
+#above results on the log scale, we want IRR, so need to exponentiate our results
+#use the delta method
+s_m_baseline_ut <- deltamethod(list(~ exp(x1), ~ exp(x2), ~ exp(x3)), coef(m_baseline_ut), cov.m_baseline_ut)
+
+## exponentiate old estimates dropping the p values in column 3
+rexp.m_baseline_ut <- exp(r.est.m_baseline_ut [, -3])
+## replace SEs with estimates for exponentiated coefficients
+rexp.m_baseline_ut[, "Robust SE"] <- s_m_baseline_ut
+
+rexp.m_baseline_ut
+
+baseline_pos <- baseline %>% filter(ut_result == 1)
+summary(baseline_pos$wilson_adh)
+baseline_neg <- baseline %>% filter(ut_result == 0)
+summary(baseline_neg$wilson_adh)
+```
+
+## Week 12 model (urine)
+```{r}
+m_m12_ut <- glm(ut_result ~ wilson_adh_scaled_sd + group_new, family="poisson", data=month12)
+summary(m_m12_ut) 
+
+#robust standard errors
+cov.m_m12_ut <- vcovHC(m_m12_ut, type="HC0")
+std.err.m_m12_ut <- sqrt(diag(cov.m_m12_ut))
+r.est.m_m12_ut <- cbind(Estimate= coef(m_m12_ut), "Robust SE" = std.err.m_m12_ut,
+"Pr(>|z|)" = 2 * pnorm(abs(coef(m_m12_ut)/std.err.m_m12_ut), lower.tail=FALSE),
+LL = coef(m_m12_ut) - 1.96 * std.err.m_m12_ut,
+UL = coef(m_m12_ut) + 1.96 * std.err.m_m12_ut)
+
+r.est.m_m12_ut 
+
+#above results on the log scale, we want IRR, so need to exponentiate our results
+#use the delta method
+s_m_m12_ut <- deltamethod(list(~ exp(x1), ~ exp(x2), ~ exp(x3)), coef(m_m12_ut), cov.m_m12_ut)
+
+## exponentiate old estimates dropping the p values in column 3
+rexp.m_m12_ut <- exp(r.est.m_m12_ut[, -3])
+## replace SEs with estimates for exponentiated coefficients
+rexp.m_m12_ut[, "Robust SE"] <- s_m_m12_ut
+
+rexp.m_m12_ut
+
+month12_pos <- month12 %>% filter(ut_result == 1)
+summary(month12_pos$wilson_adh)
+month12_neg <- month12 %>% filter(ut_result == 0)
+summary(month12_neg$wilson_adh)
 ```
 

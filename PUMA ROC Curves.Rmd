@@ -151,18 +151,18 @@ results_combined
 ```{r}
 # 1. Combined model (adherence score + urine)
 plot1 <- create_roc_plot(hair2_results$roc, "A. Self-Report Adherence Prediction of Hair Results
-     (0.0168 ng/mL as cutoff)", "purple", "Hair (0.023 ng/mL as cutoff), AUC")
+     (0.023 ng/mg as cutoff)", "purple", "Hair (0.023 ng/mg as cutoff), AUC")
 
 # 2. Combined model (adherence score + urine 
 plot2 <-  create_roc_plot(combined_results$roc, "C. Combined Self-Report Adherence and 
-     Urine Result Prediction of Hair Results", "blue", "Hair (0.023 ng/mL as cutoff), AUC")
+     Urine Result Prediction of Hair Results", "blue", "Hair (0.023 ng/mg as cutoff), AUC")
 
 # 2. Urine outcome
 plot3 <- create_roc_plot(urine_results$roc, "D. Self-Report Adherence Prediction of Urine Results", "red", "Urine (1500 ng/mL as cutoff), AUC")
 
 # 3. Hair Outcome
 plot4 <- create_roc_plot(hair_results$roc, "B. Self-Report Adherence Prediction of Hair Results 
-     (0.002 ng/mL as cutoff)", "green", "Hair (0.002 ng/mL as cutoff), AUC")
+     (0.002 ng/mg as cutoff)", "green", "Hair (0.002 ng/mg as cutoff), AUC")
 
 # Combine all plots into a 2x2 grid
 combined_plot <- grid.arrange(plot1, plot4, plot2, plot3, ncol = 2)
