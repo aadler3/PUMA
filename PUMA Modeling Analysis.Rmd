@@ -53,7 +53,7 @@ hair_gee_data <- prepare_gee_data(
   predictors = c("wilson_adh_scaled_sd", "group_new"),
   additional_vars = c("wilson_adh10", "wilson_adh", "STRAND_hair", "STRAND_hair_bin",
                       "hair3code", "hair2code", "hair2_coded", "hair3numeric",
-                      "emp_coded", "age", "edu")
+                      "emp_coded", "age", "edu", "visit_coded")
 )
 
 
@@ -62,7 +62,7 @@ ut_gee_data <- prepare_gee_data(
   puma_all, 
   outcome = "ut_result", 
   predictors = c("wilson_adh_scaled_sd", "group_new"),
-  additional_vars = c("wilson_adh", "wilson_adh10", "emp_coded", "age", "edu")
+  additional_vars = c("wilson_adh", "wilson_adh10", "emp_coded", "age", "edu", "visit_coded")
 )
 
 ## Continuous hair
@@ -667,5 +667,44 @@ month12_pos <- month12 %>% filter(ut_result == 1)
 summary(month12_pos$wilson_adh)
 month12_neg <- month12 %>% filter(ut_result == 0)
 summary(month12_neg$wilson_adh)
+```
+
+# Dose Response Model for P-Values
+## Urine
+```{r}
+dose_response_m <- glm(ut_result ~ group_new + wilson_adh_scaled_sd*visit_coded, family="poisson", data=ut_gee_data)
+summary(dose_response_m) 
+
+#robust standard errors
+cov.dose_response_m <- vcovHC(dose_response_m, type="HC0")
+std.err.dose_response_m <- sqrt(diag(cov.dose_response_m))
+r.est.dose_response_m <- cbind(Estimate= coef(dose_response_m), "Robust SE" = std.err.dose_response_m,
+"Pr(>|z|)" = 2 * pnorm(abs(coef(dose_response_m)/std.err.dose_response_m), lower.tail=FALSE),
+LL = coef(dose_response_m) - 1.96 * std.err.dose_response_m,
+UL = coef(dose_response_m) + 1.96 * std.err.dose_response_m)
+
+r.est.dose_response_m 
+```
+
+## Hair
+```{r}
+dose_response_m_hair <- glm(hair2_coded ~ group_new + wilson_adh_scaled_sd*visit_coded, family="poisson", data=hair_gee_data)
+summary(dose_response_m_hair) 
+
+#robust standard errors
+cov.dose_response_m_hair <- vcovHC(dose_response_m_hair, type="HC0")
+std.err.dose_response_m_hair <- sqrt(diag(cov.dose_response_m_hair))
+r.est.dose_response_m_hair <- cbind(Estimate= coef(dose_response_m_hair), "Robust SE" = std.err.dose_response_m_hair,
+"Pr(>|z|)" = 2 * pnorm(abs(coef(dose_response_m_hair)/std.err.dose_response_m_hair), lower.tail=FALSE),
+LL = coef(dose_response_m_hair) - 1.96 * std.err.dose_response_m_hair,
+UL = coef(dose_response_m_hair) + 1.96 * std.err.dose_response_m_hair)
+
+r.est.dose_response_m_hair 
+```
+
+# Ordinal Logistic Regression
+```{r}
+summary(puma_all$wilson_adh)
+hist(puma_all$wilson_adh)
 ```
 

@@ -1,0 +1,248 @@
+---
+title: "ROVING PUMA Retention Report V2"
+author: "Aliza Adler"
+date: "2025-09-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+#load packages
+library(dplyr)
+library(flextable)
+library(tidyr)
+library(data.table)
+library(labelled)
+library(expss)
+library(tibble)
+library(lubridate)
+library(ggplot2)
+library(gt)
+library(webshot2)
+```
+
+```{r, include=FALSE}
+#load data
+#!/usr/bin/env Rscript
+token <- Sys.getenv("ROVING_PUMA_API_TOKEN")
+url <- "https://redcap.ucsf.edu/api/"
+formData <- list("token"=token,
+    content='report',
+    format='csv',
+    report_id='219793',
+    csvDelimiter='',
+    rawOrLabel='raw',
+    rawOrLabelHeaders='raw',
+    exportCheckboxLabel='false',
+    returnFormat='csv'
+)
+all <- httr::POST(url, body = formData, encode = "form")
+all <- httr::content(all)
+
+formData <- list("token"=token,
+    content='report',
+    format='csv',
+    report_id='219792',
+    csvDelimiter='',
+    rawOrLabel='raw',
+    rawOrLabelHeaders='raw',
+    exportCheckboxLabel='false',
+    returnFormat='csv'
+)
+response <- httr::POST(url, body = formData, encode = "form")
+termination_data <- httr::content(response)
+
+#randomization date
+url <- "https://redcap.ucsf.edu/api/"
+formData <- list("token"=token,
+    content='report',
+    format='csv',
+    report_id='219800',
+    csvDelimiter='',
+    rawOrLabel='raw',
+    rawOrLabelHeaders='raw',
+    exportCheckboxLabel='false',
+    returnFormat='csv'
+)
+response <- httr::POST(url, body = formData, encode = "form")
+randomized_Date <- httr::content(response)
+```
+
+```{r, include=FALSE}
+#rename event names
+all <- all %>% mutate(Month = case_when(redcap_event_name=="baseline_arm_1" ~ "Baseline",
+                                       redcap_event_name=="month_1_arm_1" ~ "Month_1",
+                                       redcap_event_name=="month_2_arm_1" ~ "Month_2",
+                                       redcap_event_name=="month_3_arm_1" ~ "Month_3",
+                                       redcap_event_name=="month_4_arm_1" ~ "Month_4",
+                                       redcap_event_name=="month_5_arm_1" ~ "Month_5",
+                                       redcap_event_name=="month_6_arm_1" ~ "Month_6",
+                                       redcap_event_name=="month_9_arm_1" ~ "Month_9",
+                                       redcap_event_name=="month_12_arm_1" ~ "Month_12",
+                                       redcap_event_name=="month_18_arm_1" ~ "Month_18",
+                                       redcap_event_name=="global_arm_1" ~ "Global"))
+all <- all %>% relocate(Month, .after = "pid")
+
+#fill down arm
+all <- all %>% arrange(pid, Month)
+#fills missing values by carrying forward the last observed non-missing value within the same group
+all <- all %>% group_by(pid) %>% fill(tmt, study_arm, vs_arm, facility, .direction = "down")
+
+#remove repeat instances
+all <- all %>% filter(is.na(redcap_repeat_instance) | redcap_repeat_instance==1)
+#remove not visit summary
+all <- all %>% filter(!is.na(redcap_repeat_instrument))
+```
+
+```{r, include=FALSE}
+# Remove problematic records
+
+## 2602 was an accidental randomization of a practice participant and is not real data
+
+all <- all %>% filter(pid != "2602")
+all <- all %>% filter(pid != "2758")
+
+termination_data <- termination_data %>% filter(pid != "2602")
+termination_data <- termination_data %>% filter(pid != "2758")
+```
+
+```{r, include = FALSE}
+# Code Facility Name
+
+all <- all %>% mutate(facility = case_when(facility == 1 ~ "Dimbaza",
+                                           facility == 2 ~ "Nontyatyambo",
+                                           facility == 3 ~ "Duncan Village",
+                                           facility == 4 ~ "East London Central",
+                                           facility == 5 ~ "Empilweni",
+                                           facility == 6 ~ "Luyolo NU 9",
+                                           facility == 7 ~ "Philani"
+                                           ))
+```
+
+
+```{r, include=FALSE}
+#make sure visit summary was completed if visit window closed (even if participant missed visit, still need that entered)
+today <- today()
+#we want to make sure !is.na(visit_attended)
+table(all$vs_attended, useNA = "ifany")
+
+all %>% filter(is.na(vs_attended))
+
+all$vs_next_visit_2 <-  as.POSIXct(all$vs_next_visit_2, format = "%Y-%m-%d")
+
+visits_all <- all %>% filter(redcap_repeat_instrument=="visit_summary")
+visits_all <- visits_all %>% select(pid, Month, redcap_repeat_instrument, redcap_repeat_instance, tmt, study_arm, vs_visit_date, vs_attended, vs_missed, vs_next_visit_2, vs_next_visit_open_2, vs_next_visit_closes_2)
+
+#add visit window close to set of all randomized participants (randomized_Date)
+visits_all_rand <- visits_all %>% filter(pid %in% randomized_Date$pid)
+window_close <- visits_all_rand %>% select(-redcap_repeat_instrument, -redcap_repeat_instance, -study_arm)
+
+#calculate open and close dates for visit windows
+#month 1 target date
+window_close <- window_close %>% mutate(target_m1 = ifelse(Month == "Baseline", vs_next_visit_2, NA),
+         target_m1 = as.Date(target_m1, origin = "1970-01-01"))
+#month 1 window open
+window_close <- window_close %>% mutate(open_m1 = target_m1 - 7)
+#month 1 window close
+window_close <- window_close %>% mutate(close_m1 = target_m1 + 7)
+
+#month 2 target date
+window_close <- window_close %>% mutate(target_m2 = ifelse(Month == "Month_1", vs_next_visit_2, NA),
+         target_m2 = as.Date(target_m2, origin = "1970-01-01"))
+#month 2 window open
+window_close <- window_close %>% mutate(open_m2 = target_m2-7)
+#month 2 window close
+window_close <- window_close %>% mutate(close_m2 = target_m2 + 7)
+
+#month 3 target date
+window_close <- window_close %>% mutate(target_m3 = ifelse(Month == "Month_2", vs_next_visit_2, NA),
+         target_m3 = as.Date(target_m3, origin = "1970-01-01"))
+#month 3 window open
+window_close <- window_close %>% mutate(open_m3 = target_m3-7)
+#month 3 window close
+window_close <- window_close %>% mutate(close_m3 = target_m3 + 7)
+
+#month 4 target date
+window_close <- window_close %>% mutate(target_m4 = ifelse((Month == "Month_3" & tmt == 1), vs_next_visit_2, NA),
+         target_m4 = as.Date(target_m4, origin = "1970-01-01"))
+#month 4 window open
+window_close <- window_close %>% mutate(open_m4 = target_m4-7)
+#month 4 window close
+window_close <- window_close %>% mutate(close_m4 = target_m4 + 7)
+
+#month 5 target date
+window_close <- window_close %>% mutate(target_m5 = ifelse((Month == "Month_4" & tmt == 1), vs_next_visit_2, NA),
+         target_m5 = as.Date(target_m5, origin = "1970-01-01"))
+#month 5 window open
+window_close <- window_close %>% mutate(open_m5 = target_m5-7)
+#month 5 window close
+window_close <- window_close %>% mutate(close_m5 = target_m5 + 7)
+
+#month 6 target date
+window_close <- window_close %>%  mutate(target_m6 = case_when(
+    (Month == "Month_5") & (tmt == 1) ~ vs_next_visit_2,
+    (Month == "Month_3") & (tmt == 2) ~ vs_next_visit_2,
+    TRUE ~ as.Date(NA)
+  ))
+#month 6 window open
+window_close <- window_close %>% mutate(open_m6 = target_m6-7)
+#month 6 window close
+window_close <- window_close %>% mutate(close_m6 = target_m6 + 7)
+
+#month 9 target date
+window_close <- window_close %>% mutate(target_m9 = ifelse(Month == "Month_6", vs_next_visit_2, NA),
+         target_m9 = as.Date(target_m9, origin = "1970-01-01"))
+#month 9 window open
+window_close <- window_close %>% mutate(open_m9 = target_m9-7)
+#month 9 window close
+window_close <- window_close %>% mutate(close_m9 = target_m9 + 7)
+
+#month 12 target date
+window_close <- window_close %>% mutate(target_m12 = ifelse(Month == "Month_9", vs_next_visit_2, NA),
+         target_m12 = as.Date(target_m12, origin = "1970-01-01"))
+#month 12 window open
+window_close <- window_close %>% mutate(open_m12 = target_m12-7)
+#month 12 window close
+window_close <- window_close %>% mutate(close_m12 = target_m12 + 7)
+
+#month 18 target date
+window_close <- window_close %>% mutate(target_m18 = ifelse(Month == "Month_12", vs_next_visit_2, NA),
+         target_m18 = as.Date(target_m18, origin = "1970-01-01"))
+#month 18 window open
+window_close <- window_close %>% mutate(open_m18 = target_m18-7)
+#month 18 window close
+window_close <- window_close %>% mutate(close_m18 = target_m18 + 7)
+
+window_close <- window_close %>% select(pid, tmt, close_m1, close_m2, 
+                                        close_m3, close_m4, close_m5, close_m6,
+                                        close_m9, close_m12, close_m18)
+
+#convert to long
+window_close_long <- reshape(window_close, varying=list(names(window_close)[3:11]), idvar = c("pid","tmt"), v.names=c("close_date"), times= c("close_m1", "close_m2",
+                                          "close_m3", "close_m4", "close_m5", "close_m6",
+                                        "close_m9", "close_m12", "close_m18"), direction = "long")
+
+window_close_long <- window_close_long %>% mutate(Month = case_when(time == "close_m1" ~ "Month_1",
+                                                            time == "close_m2" ~ "Month_2",
+                                                            time == "close_m3" ~ "Month_3",
+                                                            time == "close_m4" ~ "Month_4",
+                                                            time == "close_m5" ~ "Month_5",
+                                                            time == "close_m6" ~ "Month_6",
+                                                            time == "close_m9" ~ "Month_9",
+                                                            time == "close_m12" ~ "Month_12",
+                                                            time == "close_m18" ~ "Month_18",  
+                                                            ))
+window_close_long <- window_close_long %>% select(-time)
+
+#keep only those with closed window
+window_close_past <- window_close_long %>% filter(close_date < today)
+
+#remove Months 1, 2, 4, 5 if SOC arm
+window_close_past <- window_close_past %>% filter(tmt!=2 | Month!="Month_1")
+window_close_past <- window_close_past %>% filter(tmt!=2 | Month!="Month_2")
+window_close_past <- window_close_past %>% filter(tmt!=2 | Month!="Month_4")
+window_close_past <- window_close_past %>% filter(tmt!=2 | Month!="Month_5")
+```
